@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-electron/
+release/
+release-*/
+*.log
+*.tmp
+.DS_Store
+blue_archive_config.json
