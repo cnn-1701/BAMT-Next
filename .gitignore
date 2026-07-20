@@ -3,16 +3,19 @@ dist/
 dist-electron/
 release/
 release-*/
-*.exe
-*.dll
-*.pak
-*.bin
-*.dat
-*.asar
 *.log
 *.tmp
+*.pyc
+__pycache__/
 .DS_Store
 blue_archive_config.json
 
-__pycache__/
-*.pyc
+# Heavy binary release artifacts kept locally.
+releases/archives/
+releases/media/
+legacy/tkinter-package/**/*.exe
+legacy/tkinter-package/**/*.dll
+legacy/tkinter-package/**/*.pak
+legacy/tkinter-package/**/*.bin
+legacy/tkinter-package/**/*.dat
+legacy/tkinter-package/**/*.asar
