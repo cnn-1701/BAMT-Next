@@ -1,0 +1,28 @@
+{
+  "resolution": {
+    "width": 2560,
+    "height": 1600
+  },
+  "actions": [
+    {
+      "name": "宏1",
+      "hotkey": "q",
+      "type": "点位",
+      "target_x": 775,
+      "target_y": 1460,
+      "drag_distance": 300,
+      "drag_duration": 0.02,
+      "loop_interval": 0.02
+    },
+    {
+      "name": "宏2",
+      "hotkey": "w",
+      "type": "拖动",
+      "target_x": 775,
+      "target_y": 1460,
+      "drag_distance": 300,
+      "drag_duration": 0.02,
+      "loop_interval": 0.02
+    }
+  ]
+}

@@ -1,36 +1,44 @@
 ﻿# BAMT 项目目录
 
-当前推荐维护的项目是 `最终宏/发布/BAMT-next`。
+当前主项目是 pps/bamt-next，旧版脚本、打包产物和素材已经按用途归档。
 
-## 目录说明
+## 顶层目录
 
-- `最终宏/发布/BAMT-next/`：新版主项目，Electron + React + TypeScript 前端，Python Windows 输入后端。
-- `最终宏/发布/BAMTb/BAMT/`：旧版 Tkinter 单文件项目与旧版可执行文件，用作功能对照和兼容配置来源。
-- `最终宏/发布/*.zip`、图片、视频、旧 Python 草稿：历史发布包和素材，默认不纳入 Git 初始版本。
-- `.gitignore`：忽略构建产物、依赖目录、可执行文件、缓存和本地配置。
+- pps/bamt-next/：新版主项目，Electron + React + TypeScript 前端，Python Windows 输入后端。
+- legacy/early-scripts/：早期单文件 Python 实验版本。
+- legacy/versioned-python/：按 2.0、3.0、5.0 保留的历史版本。
+- legacy/tkinter-package/：旧 Tkinter 发布目录和可执行文件。
+- legacy/published-python/：最终发布阶段留下的 Python 源文件。
+- config-samples/：旧版 JSON 配置样例。
+- untime-logs/：历史运行日志。
+- eleases/archives/：历史压缩包和可分发包。
+- eleases/media/：封面、截图、原视频等发布素材。
 
 ## 新版源码结构
 
-```text
-最终宏/发布/BAMT-next
+`	ext
+apps/bamt-next
 ├─ backend/
-│  ├─ macro_service.py       # Windows 热键监听、鼠标输入、配置读写
+│  ├─ macro_service.py
 │  └─ requirements.txt
 ├─ electron/
-│  ├─ main.ts                # Electron 主进程、后端进程管理、IPC
-│  └─ preload.ts             # 安全暴露前端 API
+│  ├─ main.ts
+│  └─ preload.ts
 ├─ src/
-│  ├─ App.tsx                # 主界面与配置编辑
-│  ├─ api.ts                 # Electron API / 浏览器预览 fallback
-│  ├─ config.ts              # 默认配置、动作类型、校验逻辑
-│  ├─ hotkeys.ts             # 键盘/鼠标热键录入与显示
+│  ├─ App.tsx
+│  ├─ api.ts
+│  ├─ config.ts
+│  ├─ hotkeys.ts
 │  ├─ main.tsx
 │  ├─ styles.css
 │  └─ types.ts
 ├─ package.json
 └─ README.md
-```
+`
 
-## Git 策略
+## 维护规则
 
-初始提交只跟踪新版源码、构建配置、README 和忽略规则。旧版文件、发布包、构建输出、依赖目录继续留在工作区，但保持未跟踪，避免仓库变得过重。
+- 新功能只在 pps/bamt-next 开发。
+- 历史 Python 版本只作参考，除非明确需要复刻旧行为。
+- 构建产物、依赖、日志、本地配置和大型发布素材默认不进 Git。
+- 需要发布时，从 pps/bamt-next 构建，再把产物放入 eleases/archives/。

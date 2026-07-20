@@ -1,0 +1,79 @@
+{
+  "resolution": {
+    "width": 2560,
+    "height": 1600
+  },
+  "actions": [
+    {
+      "name": "宏1",
+      "hotkey": "q",
+      "type": "点位",
+      "target_x": 1790,
+      "target_y": 1433,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.1
+    },
+    {
+      "name": "宏2",
+      "hotkey": "w",
+      "type": "点位",
+      "target_x": 1985,
+      "target_y": 1390,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.1
+    },
+    {
+      "name": "宏3",
+      "hotkey": "e",
+      "type": "点位",
+      "target_x": 2198,
+      "target_y": 1429,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.1
+    },
+    {
+      "name": "宏4",
+      "hotkey": "1",
+      "type": "拖动",
+      "target_x": 1764,
+      "target_y": 1441,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.1
+    },
+    {
+      "name": "宏5",
+      "hotkey": "2",
+      "type": "拖动",
+      "target_x": 2006,
+      "target_y": 1410,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.1
+    },
+    {
+      "name": "宏6",
+      "hotkey": "3",
+      "type": "拖动",
+      "target_x": 2191,
+      "target_y": 1415,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.1
+    },
+    {
+      "name": "宏8",
+      "hotkey": "r",
+      "type": "点位",
+      "target_x": 1827,
+      "target_y": 702,
+      "drag_distance": 200,
+      "drag_duration": 0.02,
+      "click_interval": 0.05
+    }
+  ],
+  "exit_key": "x"
+}
