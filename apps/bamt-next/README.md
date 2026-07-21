@@ -353,10 +353,6 @@ release/
 
 先确认导入文件的基准分辨率和当前游戏分辨率。战场点位和手牌 UI 使用不同映射算法，Q/W/E 导入后建议手动校准。
 
-### OneDrive 同步提示 `.lock` 或不允许文件名
-
-Electron、Python 和打包工具可能产生锁文件或依赖缓存。建议源码和打包输出不要放在 OneDrive 同步目录，或把 `node_modules/`、`release/`、缓存目录排除同步。
-
 ## 技术栈
 
 - Electron 37
