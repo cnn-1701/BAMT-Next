@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+﻿import { app, BrowserWindow, ipcMain, shell, dialog, type OpenDialogOptions } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,37 +11,158 @@ const resourcesDir = process.resourcesPath;
 const backendDir = isDev ? path.join(appDir, "backend") : path.join(resourcesDir, "backend");
 const preloadPath = path.join(appDir, "dist-electron", "electron", "preload.js");
 const projectDir = isDev ? appDir : path.dirname(process.execPath);
-const configPath = path.join(app.getPath("userData"), "blue_archive_config.json");
-const legacyConfigPath = path.join(projectDir, "BAMTb", "BAMT", "blue_archive_config.json");
-const legacyExePath = path.join(projectDir, "BAMTb", "BAMT", "BlueArchiveMacroTool.exe");
+const dataDir = path.join(projectDir, "data");
+const configDir = path.join(dataDir, "config");
+const presetDir = path.join(dataDir, "presets");
+const presetImportDir = path.join(dataDir, "imports");
+const presetExportDir = path.join(dataDir, "exports");
+const ahkDataDir = path.join(dataDir, "ahk");
+const timelineDir = path.join(dataDir, "timelines");
+const configPath = path.join(configDir, "blue_archive_config.json");
+const presetLibraryPath = path.join(presetDir, "preset-library.json");
+const legacyConfigPath = path.join(projectDir, "legacy", "tkinter-package", "BAMTb-release", "BAMT", "blue_archive_config.json");
+const legacyExePath = path.join(projectDir, "legacy", "tkinter-package", "BAMTb-release", "BAMT", "BlueArchiveMacroTool.exe");
 
 let mainWindow: BrowserWindow | null = null;
 let backend: MacroBackend | null = null;
+let ahkProcess: ChildProcessWithoutNullStreams | null = null;
+let timelinePreviewWindow: BrowserWindow | null = null;
+
+function pythonCandidates(): string[] {
+  const bundledDevPython = "C:\\Users\\MisonoMika\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe";
+  const candidates = [
+    process.env.BAMT_PYTHON,
+    path.join(appDir, ".python", "python.exe"),
+    path.join(projectDir, ".python", "python.exe"),
+    path.join(resourcesDir, "python", "python.exe"),
+    fs.existsSync(bundledDevPython) ? bundledDevPython : undefined,
+    "py",
+    "python",
+    "python3"
+  ].filter(Boolean) as string[];
+  return [...new Set(candidates)];
+}
+
+function ahkCandidates(): string[] {
+  const candidates = [
+    process.env.BAMT_AHK,
+    path.join(appDir, "tools", "AutoHotkey", "AutoHotkey64.exe"),
+    path.join(resourcesDir, "AutoHotkey", "AutoHotkey64.exe"),
+    "AutoHotkey64.exe",
+    "AutoHotkey.exe"
+  ].filter(Boolean) as string[];
+  return [...new Set(candidates)];
+}
+
+function ensureDataDirs(): void {
+  for (const dir of [dataDir, configDir, presetDir, presetImportDir, presetExportDir, ahkDataDir, timelineDir]) fs.mkdirSync(dir, { recursive: true });
+}
+
+function safeTimelineName(filename: string): string {
+  const base = path.basename(String(filename || "timeline.json")).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+  return base.toLowerCase().endsWith(".json") ? base : base + ".json";
+}
+
+function safeExportName(filename: string): string {
+  const base = path.basename(String(filename || "bamt-presets.json")).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+  return base.toLowerCase().endsWith(".json") ? base : base + ".json";
+}
+
+function readPresetLibrary(): unknown[] {
+  ensureDataDirs();
+  if (!fs.existsSync(presetLibraryPath)) return [];
+  const parsed = JSON.parse(fs.readFileSync(presetLibraryPath, "utf8"));
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function writePresetLibrary(presets: unknown): void {
+  ensureDataDirs();
+  fs.writeFileSync(presetLibraryPath, JSON.stringify(Array.isArray(presets) ? presets : [], null, 2), "utf8");
+}
+
+function storagePaths() {
+  return {
+    projectDir,
+    dataDir,
+    configPath,
+    presetLibraryPath,
+    presetImportDir,
+    presetExportDir,
+    ahkDataDir,
+    timelineDir,
+    relative: {
+      dataDir: "data",
+      configPath: "data/config/blue_archive_config.json",
+      presetLibraryPath: "data/presets/preset-library.json",
+      presetImportDir: "data/imports",
+      presetExportDir: "data/exports",
+      ahkDataDir: "data/ahk",
+      timelineDir: "data/timelines"
+    }
+  };
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char] ?? char));
+}
+
+function timelinePreviewHtml(text: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>排轴文本预览</title><style>
+    body{margin:0;background:#f5f9fc;color:#18324a;font-family:"Microsoft YaHei",Segoe UI,sans-serif;}
+    header{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(245,249,252,.94);backdrop-filter:blur(12px);border-bottom:1px solid #d6e6f3;padding:14px 18px;}
+    h1{margin:0;font-size:20px;} button{min-height:36px;padding:0 14px;border:1px solid #9fc8e8;border-radius:8px;background:#e8f6ff;color:#0b73af;font-weight:800;cursor:pointer;}
+    button.active{background:#17314a;color:white;border-color:#17314a;} pre{white-space:pre-wrap;margin:0;padding:22px 24px;font:18px/1.78 Consolas,"Microsoft YaHei",monospace;}
+  </style></head><body><header><h1>排轴文本预览</h1><button id="topmost" class="active">置顶已开启</button></header><pre>${escapeHtml(text)}</pre><script>
+    let enabled = true;
+    const button = document.getElementById("topmost");
+    button.addEventListener("click", async () => {
+      enabled = !enabled;
+      const result = await window.bamt?.setTimelinePreviewAlwaysOnTop?.(enabled);
+      button.classList.toggle("active", enabled);
+      button.textContent = enabled ? "置顶已开启" : "置顶已关闭";
+      if (!result) button.textContent = "置顶控制不可用";
+    });
+  </script></body></html>`;
+}
+
+async function spawnAhk(command: string, scriptPath: string): Promise<{ child: ChildProcessWithoutNullStreams | null; completed: boolean }> {
+  if (path.isAbsolute(command) && !fs.existsSync(command)) throw new Error("AutoHotkey executable not found");
+  const child = spawn(command, [scriptPath], { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => { clearTimeout(timer); child.off("error", fail); child.off("exit", exitEarly); };
+    const fail = (error: Error) => { if (settled) return; settled = true; cleanup(); reject(error); };
+    const exitEarly = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (code === 0) resolve({ child: null, completed: true });
+      else reject(new Error(`AutoHotkey exited before ready. code=${code ?? "null"} ${stderr}`));
+    };
+    const timer = setTimeout(() => { if (settled) return; settled = true; cleanup(); resolve({ child, completed: false }); }, 500);
+    child.once("error", fail);
+    child.once("exit", exitEarly);
+  });
+}
 
 class MacroBackend {
   private child: ChildProcessWithoutNullStreams | null = null;
   private seq = 0;
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-
   constructor(private readonly onEvent: (event: BackendEvent) => void) {}
-
   async ensureStarted(): Promise<void> {
     if (this.child && !this.child.killed) return;
     const backendPath = path.join(backendDir, "macro_service.py");
-    if (!fs.existsSync(backendPath)) throw new Error(`找不到后端服务：${backendPath}`);
-    const candidates = process.env.BAMT_PYTHON ? [process.env.BAMT_PYTHON] : ["python", "py", "python3"];
-    let lastError: unknown;
-    for (const command of candidates) {
-      try {
-        await this.spawnWith(command, backendPath);
-        return;
-      } catch (error) {
-        lastError = error;
-      }
+    if (!fs.existsSync(backendPath)) throw new Error(`Cannot find backend service: ${backendPath}`);
+    const errors: string[] = [];
+    for (const command of pythonCandidates()) {
+      try { await this.spawnWith(command, backendPath); return; }
+      catch (error) { errors.push(`${command}: ${String(error)}`); }
     }
-    throw new Error(`无法启动 Python 后端。请安装 Python 3 并执行 pip install -r backend/requirements.txt。${String(lastError)}`);
+    throw new Error(`Cannot start Python backend. Set BAMT_PYTHON to python.exe. Tried:\n${errors.join("\n")}`);
   }
-
   async request<T>(command: string, payload?: unknown): Promise<T> {
     await this.ensureStarted();
     const id = ++this.seq;
@@ -54,93 +175,109 @@ class MacroBackend {
       });
     });
   }
-
   stop(): void {
     if (!this.child) return;
-    try {
-      this.child.stdin.write(`${JSON.stringify({ id: ++this.seq, command: "shutdown" })}\n`);
-    } catch {
-      // Process may already be closed.
-    }
+    try { this.child.stdin.write(`${JSON.stringify({ id: ++this.seq, command: "shutdown" })}\n`); } catch {}
     this.child.kill();
     this.child = null;
   }
-
   private async spawnWith(command: string, backendPath: string): Promise<void> {
     const args = command === "py" ? ["-3", backendPath] : [backendPath];
-    const child = spawn(command, args, {
-      cwd: projectDir,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-      env: { ...process.env, BAMT_CONFIG_PATH: configPath, BAMT_LEGACY_CONFIG_PATH: legacyConfigPath, PYTHONIOENCODING: "utf-8" }
-    });
-
+    ensureDataDirs();
+    const child = spawn(command, args, { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, BAMT_CONFIG_PATH: configPath, BAMT_LEGACY_CONFIG_PATH: legacyConfigPath, PYTHONIOENCODING: "utf-8" } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`${command} 启动超时`)), 2500);
-      const fail = (error: Error) => {
-        clearTimeout(timer);
-        reject(error);
-      };
+      const timer = setTimeout(() => { cleanup(); this.child = child; this.attachReaders(child); resolve(); }, 900);
+      const fail = (error: Error) => { cleanup(); reject(error); };
+      const exitEarly = (code: number | null) => { cleanup(); reject(new Error(`${command} exited before ready. code=${code ?? "null"} ${stderr}`)); };
+      const cleanup = () => { clearTimeout(timer); child.off("error", fail); child.off("exit", exitEarly); };
       child.once("error", fail);
-      child.once("spawn", () => {
-        child.off("error", fail);
-        clearTimeout(timer);
-        this.child = child;
-        this.attachReaders(child);
-        resolve();
-      });
+      child.once("exit", exitEarly);
     });
   }
-
   private attachReaders(child: ChildProcessWithoutNullStreams): void {
+    child.stderr.on("data", (chunk) => this.onEvent({ type: "log", payload: { level: "error", message: chunk.toString("utf8") } }));
     readline.createInterface({ input: child.stdout }).on("line", (line) => {
       if (!line.trim()) return;
       try {
         const message = JSON.parse(line) as { id?: number; ok?: boolean; result?: unknown; error?: string; event?: BackendEvent };
-        if (message.event) {
-          this.onEvent(message.event);
-          return;
-        }
+        if (message.event) { this.onEvent(message.event); return; }
         if (typeof message.id === "number" && this.pending.has(message.id)) {
           const pending = this.pending.get(message.id)!;
           this.pending.delete(message.id);
-          message.ok ? pending.resolve(message.result) : pending.reject(new Error(message.error ?? "后端返回未知错误"));
+          message.ok ? pending.resolve(message.result) : pending.reject(new Error(message.error ?? "Backend returned an unknown error"));
         }
       } catch (error) {
-        this.onEvent({ type: "log", payload: { level: "warn", message: `后端输出解析失败：${String(error)}` } });
+        this.onEvent({ type: "log", payload: { level: "warn", message: `Failed to parse backend output: ${String(error)}` } });
       }
     });
-
-    child.stderr.on("data", (chunk) => this.onEvent({ type: "log", payload: { level: "error", message: chunk.toString("utf8") } }));
     child.on("exit", () => {
-      for (const pending of this.pending.values()) pending.reject(new Error("后端进程已退出"));
-      this.pending.clear();
-      this.child = null;
-      this.onEvent({ type: "status", payload: { status: "unavailable", message: "后端进程已退出" } });
+      for (const pending of this.pending.values()) pending.reject(new Error("Backend process exited"));
+      this.pending.clear(); this.child = null;
+      this.onEvent({ type: "status", payload: { status: "unavailable", message: "Backend process exited" } });
     });
   }
 }
 
 async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 980,
-    minHeight: 640,
-    title: "BAMT Next",
-    backgroundColor: "#f5f7fb",
-    webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false }
-  });
+  mainWindow = new BrowserWindow({ width: 1360, height: 860, minWidth: 1060, minHeight: 720, title: "BAMT Next", backgroundColor: "#edf5fb", webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false } });
   if (isDev) await mainWindow.loadURL("http://127.0.0.1:5173");
   else await mainWindow.loadFile(path.join(appDir, "dist", "index.html"));
 }
-
-function emit(event: BackendEvent): void {
-  mainWindow?.webContents.send("macro:event", event);
-}
-
+function emit(event: BackendEvent): void { mainWindow?.webContents.send("macro:event", event); }
 function registerIpc(): void {
+  ensureDataDirs();
   backend = new MacroBackend(emit);
+  ipcMain.handle("macro:get-storage-paths", async () => storagePaths());
+  ipcMain.handle("macro:load-preset-library", async () => readPresetLibrary());
+  ipcMain.handle("macro:save-preset-library", async (_, presets: unknown) => {
+    writePresetLibrary(presets);
+    return { status: "ready", message: "宏预设库已保存到 data/presets/preset-library.json" };
+  });
+  ipcMain.handle("macro:save-timeline-file", async (_, filename: string, value: unknown) => {
+    ensureDataDirs();
+    const outPath = path.join(timelineDir, safeTimelineName(filename));
+    fs.writeFileSync(outPath, JSON.stringify(value, null, 2), "utf8");
+    return { status: "ready", message: "排轴已自动保存：data/timelines/" + path.basename(outPath) };
+  });
+  ipcMain.handle("macro:pick-timeline-file", async () => {
+    ensureDataDirs();
+    const options: OpenDialogOptions = { title: "选择排轴 JSON", defaultPath: timelineDir, properties: ["openFile"], filters: [{ name: "BAMT 排轴", extensions: ["json"] }, { name: "全部文件", extensions: ["*"] }] };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return null;
+    const filePath = result.filePaths[0];
+    return { name: path.basename(filePath), path: filePath, text: fs.readFileSync(filePath, "utf8") };
+  });
+  ipcMain.handle("macro:pick-preset-package", async () => {
+    ensureDataDirs();
+    const dialogOptions: OpenDialogOptions = {
+      title: "选择要导入的 BAMT 宏预设",
+      defaultPath: presetImportDir,
+      properties: ["openFile"],
+      filters: [
+        { name: "BAMT / AHK 预设", extensions: ["json", "ahk"] },
+        { name: "全部文件", extensions: ["*"] }
+      ]
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || !result.filePaths[0]) return null;
+    const filePath = result.filePaths[0];
+    return { name: path.basename(filePath), path: filePath, text: fs.readFileSync(filePath, "utf8") };
+  });
+  ipcMain.handle("macro:export-preset-package", async (_, filename: string, value: unknown) => {
+    ensureDataDirs();
+    const outPath = path.join(presetExportDir, safeExportName(filename));
+    fs.writeFileSync(outPath, JSON.stringify(value, null, 2), "utf8");
+    return { status: "ready", message: "宏预设已导出：" + outPath };
+  });
+  ipcMain.handle("macro:open-data-dir", async () => {
+    ensureDataDirs();
+    const error = await shell.openPath(dataDir);
+    return error ? { status: "error", message: error } : { status: "ready", message: "已打开项目 data 目录" };
+  });
   ipcMain.handle("macro:get-initial-config", async () => backend!.request<MacroConfig>("get_initial_config"));
   ipcMain.handle("macro:save-config", async (_, config: MacroConfig) => backend!.request<MacroConfig>("save_config", config));
   ipcMain.handle("macro:load-config", async () => backend!.request<MacroConfig>("load_config"));
@@ -149,22 +286,71 @@ function registerIpc(): void {
   ipcMain.handle("macro:test-macro", async (_, action: MacroAction, config: MacroConfig) => backend!.request<StatusPayload>("test_macro", { action, config }));
   ipcMain.handle("macro:capture-position", async (_, delayMs: number) => backend!.request<CapturePayload>("capture_position", { delayMs }));
   ipcMain.handle("macro:open-legacy-app", async () => {
-    if (!fs.existsSync(legacyExePath)) return { status: "error", message: "找不到旧版 EXE" };
+    if (!fs.existsSync(legacyExePath)) return { status: "error", message: "Cannot find legacy EXE" };
     const error = await shell.openPath(legacyExePath);
-    return error ? { status: "error", message: error } : { status: "ready", message: "已打开旧版工具" };
+    return error ? { status: "error", message: error } : { status: "ready", message: "Legacy tool opened" };
+  });
+  ipcMain.handle("macro:open-schedule-tool", async () => ({ status: "ready", message: "排轴编辑器已内置在侧边栏中" }));
+  ipcMain.handle("macro:open-timeline-preview", async (_, text: string) => {
+    if (timelinePreviewWindow && !timelinePreviewWindow.isDestroyed()) {
+      await timelinePreviewWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(timelinePreviewHtml(String(text || ""))));
+      timelinePreviewWindow.setAlwaysOnTop(true, "screen-saver");
+      timelinePreviewWindow.show();
+      timelinePreviewWindow.focus();
+      return { status: "ready", message: "已刷新独立排轴预览窗口" };
+    }
+    timelinePreviewWindow = new BrowserWindow({
+      width: 680,
+      height: 760,
+      minWidth: 360,
+      minHeight: 420,
+      title: "排轴文本预览",
+      backgroundColor: "#f5f9fc",
+      alwaysOnTop: true,
+      webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false }
+    });
+    timelinePreviewWindow.setAlwaysOnTop(true, "screen-saver");
+    timelinePreviewWindow.once("closed", () => { timelinePreviewWindow = null; });
+    await timelinePreviewWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(timelinePreviewHtml(String(text || ""))));
+    timelinePreviewWindow.show();
+    timelinePreviewWindow.focus();
+    return { status: "ready", message: "已打开置顶排轴预览窗口" };
+  });
+  ipcMain.handle("macro:set-timeline-preview-always-on-top", async (_, enabled: boolean) => {
+    if (!timelinePreviewWindow || timelinePreviewWindow.isDestroyed()) return { status: "error", message: "排轴预览窗口未打开" };
+    timelinePreviewWindow.setAlwaysOnTop(Boolean(enabled), "screen-saver");
+    return { status: "ready", message: Boolean(enabled) ? "排轴预览窗口已置顶" : "排轴预览窗口已取消置顶" };
+  });
+  ipcMain.handle("macro:run-ahk-script", async (_, script: string) => {
+    if (ahkProcess && !ahkProcess.killed) ahkProcess.kill();
+    ensureDataDirs();
+    const scriptPath = path.join(ahkDataDir, "bamt-inline.ahk");
+    fs.writeFileSync(scriptPath, script, "utf8");
+    const errors: string[] = [];
+    for (const command of ahkCandidates()) {
+      try {
+        const result = await spawnAhk(command, scriptPath);
+        if (result.child) {
+          ahkProcess = result.child;
+          result.child.once("exit", () => { if (ahkProcess === result.child) ahkProcess = null; });
+          return { status: "ready", message: "AHK 脚本已运行：" + command };
+        }
+        return { status: "stopped", message: "AHK 脚本已执行并正常退出：" + command };
+      } catch (error) {
+        errors.push(command + ": " + String(error instanceof Error ? error.message : error));
+      }
+    }
+    return { status: "error", message: "找不到可用的 AutoHotkey v2。请安装 AHK v2，或设置环境变量 BAMT_AHK 指向 AutoHotkey64.exe。\n" + errors.join("\n") };
+  });
+  ipcMain.handle("macro:stop-ahk-script", async () => {
+    if (!ahkProcess || ahkProcess.killed) return { status: "stopped", message: "没有正在运行的 AHK 脚本" };
+    ahkProcess.kill();
+    ahkProcess = null;
+    return { status: "stopped", message: "AHK 脚本已停止" };
   });
 }
+app.whenReady().then(async () => { registerIpc(); await createWindow(); });
+app.on("window-all-closed", () => { backend?.stop(); if (process.platform !== "darwin") app.quit(); });
+app.on("before-quit", () => { backend?.stop(); ahkProcess?.kill(); timelinePreviewWindow?.close(); });
+app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 
-app.whenReady().then(async () => {
-  registerIpc();
-  await createWindow();
-});
-
-app.on("window-all-closed", () => {
-  backend?.stop();
-  if (process.platform !== "darwin") app.quit();
-});
-app.on("before-quit", () => backend?.stop());
-app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) void createWindow();
-});

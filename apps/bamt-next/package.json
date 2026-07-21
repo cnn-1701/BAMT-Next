@@ -33,10 +33,51 @@
     "appId": "com.bamt.next",
     "productName": "BAMT Next",
     "asar": true,
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
-    "extraResources": [{ "from": "backend", "to": "backend", "filter": ["**/*"] }],
-    "win": { "signAndEditExecutable": false, "target": [{ "target": "portable", "arch": ["x64"] }] },
-    "portable": { "artifactName": "BAMT-Next-${version}-portable.${ext}" }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "tools/AutoHotkey",
+        "to": "AutoHotkey",
+        "filter": [
+          "AutoHotkey64.exe",
+          "license.txt"
+        ]
+      },
+      {
+        "from": "tools/python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "BAMT-Next-${version}-portable.${ext}"
+    }
   }
 }

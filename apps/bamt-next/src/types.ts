@@ -1,5 +1,6 @@
-export type MacroType = "point" | "drag" | "autoClick" | "click";
+export type MacroType = "point" | "drag" | "autoClick" | "click" | "script";
 export type BackendStatus = "booting" | "ready" | "listening" | "stopped" | "error" | "unavailable";
+export type InputBackend = "cursor" | "windowMessage" | "touch";
 
 export interface Resolution {
   width: number;
@@ -11,24 +12,60 @@ export interface MacroAction {
   name: string;
   hotkey: string;
   type: MacroType;
+  cardKey?: string;
   targetX: number;
   targetY: number;
   dragDistance: number;
   dragDuration: number;
   clickGap: number;
+  cardClickGap: number;
+  loopGap: number;
   enabled: boolean;
+  script?: string;
 }
 
 export interface MacroConfig {
   version: string;
   resolution: Resolution;
   exitKey: string;
+  inputTakeoverEnabled: boolean;
+  inputBackend: InputBackend;
+  skillSlotXOffsets: number[];
+  skillSlotBottomOffsetRatio: number;
+  smoothMoveMinSteps: number;
+  smoothMoveStepRate: number;
   actions: MacroAction[];
 }
 
 export interface StatusPayload {
   status: BackendStatus;
   message: string;
+}
+
+export interface PresetFilePayload {
+  name: string;
+  path: string;
+  text: string;
+}
+
+export interface StoragePaths {
+  projectDir: string;
+  dataDir: string;
+  configPath: string;
+  presetLibraryPath: string;
+  presetImportDir: string;
+  presetExportDir: string;
+  ahkDataDir: string;
+  timelineDir: string;
+  relative: {
+    dataDir: string;
+    configPath: string;
+    presetLibraryPath: string;
+    presetImportDir: string;
+    presetExportDir: string;
+    ahkDataDir: string;
+    timelineDir: string;
+  };
 }
 
 export interface CapturePayload {
@@ -44,6 +81,14 @@ export type BackendEvent =
   | { type: "error"; payload: { message: string } };
 
 export interface MacroApi {
+  getStoragePaths(): Promise<StoragePaths>;
+  loadPresetLibrary(): Promise<unknown[]>;
+  savePresetLibrary(presets: unknown[]): Promise<StatusPayload>;
+  exportPresetPackage(filename: string, value: unknown): Promise<StatusPayload>;
+  saveTimelineFile(filename: string, value: unknown): Promise<StatusPayload>;
+  pickTimelineFile(): Promise<PresetFilePayload | null>;
+  pickPresetPackage(): Promise<PresetFilePayload | null>;
+  openDataDir(): Promise<StatusPayload>;
   getInitialConfig(): Promise<MacroConfig>;
   saveConfig(config: MacroConfig): Promise<MacroConfig>;
   loadConfig(): Promise<MacroConfig>;
@@ -52,6 +97,11 @@ export interface MacroApi {
   testMacro(action: MacroAction, config: MacroConfig): Promise<StatusPayload>;
   capturePosition(delayMs: number): Promise<CapturePayload>;
   openLegacyApp(): Promise<StatusPayload>;
+  openScheduleTool(): Promise<StatusPayload>;
+  openTimelinePreview(text: string): Promise<StatusPayload>;
+  setTimelinePreviewAlwaysOnTop(enabled: boolean): Promise<StatusPayload>;
+  runAhkScript(script: string): Promise<StatusPayload>;
+  stopAhkScript(): Promise<StatusPayload>;
   onEvent(listener: (event: BackendEvent) => void): () => void;
 }
 
@@ -60,3 +110,4 @@ declare global {
     bamt?: MacroApi;
   }
 }
+
