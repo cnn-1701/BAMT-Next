@@ -1,44 +1,42 @@
-﻿# BAMT 项目目录
+# BAMT — Blue Archive Macro Tool
 
-当前主项目是 pps/bamt-next，旧版脚本、打包产物和素材已经按用途归档。
+蔚蓝档案 PC 端总力战宏工具。把键盘热键映射到鼠标操作（拖技能卡、点击目标等），支持跨分辨率预设共享、排轴编辑和 AHK 脚本。
 
-## 顶层目录
+## 项目结构
 
-- pps/bamt-next/：新版主项目，Electron + React + TypeScript 前端，Python Windows 输入后端。
-- legacy/early-scripts/：早期单文件 Python 实验版本。
-- legacy/versioned-python/：按 2.0、3.0、5.0 保留的历史版本。
-- legacy/tkinter-package/：旧 Tkinter 发布目录和可执行文件。
-- legacy/published-python/：最终发布阶段留下的 Python 源文件。
-- config-samples/：旧版 JSON 配置样例。
-- untime-logs/：历史运行日志。
-- eleases/archives/：历史压缩包和可分发包。
-- eleases/media/：封面、截图、原视频等发布素材。
+```
+BAMT/
+├── apps/bamt-next/          ← 当前主项目（唯一活跃开发）
+├── legacy/                  # 历史版本归档（只读）
+│   ├── early-scripts/       #   早期单文件实验
+│   ├── versioned-python/    #   v2.0 / v3.0 / v5.0
+│   ├── tkinter-package/     #   Tkinter GUI 发布版
+│   └── published-python/    #   最终 Python 源码
+├── config-samples/          # 旧版 JSON 配置样例
+├── releases/                # 发布素材 & 历史打包产物
+└── runtime-logs/            # 历史运行日志
+```
 
-## 新版源码结构
+- **新功能只在 `apps/bamt-next` 开发**，其余目录为归档。
+- 构建产物、依赖、日志、本地配置不进 Git。
+- 发布时从 `apps/bamt-next` 构建，产物放入 `releases/archives/`。
 
-`	ext
-apps/bamt-next
-├─ backend/
-│  ├─ macro_service.py
-│  └─ requirements.txt
-├─ electron/
-│  ├─ main.ts
-│  └─ preload.ts
-├─ src/
-│  ├─ App.tsx
-│  ├─ api.ts
-│  ├─ config.ts
-│  ├─ hotkeys.ts
-│  ├─ main.tsx
-│  ├─ styles.css
-│  └─ types.ts
-├─ package.json
-└─ README.md
-`
+## 快速开始
 
-## 维护规则
+需要 Windows 10/11 x64 + Python 3（推荐 [python.org](https://www.python.org/) 安装，关掉 Microsoft Store 的 python 别名）。
 
-- 新功能只在 pps/bamt-next 开发。
-- 历史 Python 版本只作参考，除非明确需要复刻旧行为。
-- 构建产物、依赖、日志、本地配置和大型发布素材默认不进 Git。
-- 需要发布时，从 pps/bamt-next 构建，再把产物放入 eleases/archives/。
+```bash
+cd apps/bamt-next
+npm install
+npm run dev      
+npm run dist     
+```
+
+详细文档 → [`apps/bamt-next/README.md`](apps/bamt-next/README.md)。
+
+## 相关路径
+
+| 路径 | 说明 |
+|------|------|
+| `%APPDATA%\BAMT Next\blue_archive_config.json` | 用户宏配置 |
+| `%APPDATA%\BAMT Next\bamt-inline.ahk` | AHK 临时脚本 |
