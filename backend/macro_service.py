@@ -606,7 +606,7 @@ class MacroService:
                     self.run_once(action, lambda: self.stop_event.is_set())
                     # At this point the cursor has returned to the trigger position.
                     # Wait there before deciding whether to start the next cycle.
-                    sleep_cancelable(max(0.05, float(action.get("loopGap", 0.05))), self.stop_event)
+                    sleep_cancelable(max(0.001, float(action.get("loopGap", 0.005))), self.stop_event)
                 return
             if action["type"] == "click" and normalize_key(action.get("cardKey", "")):
                 while not self.stop_event.is_set() and self.is_pressed(action["hotkey"]):
@@ -709,14 +709,14 @@ class MacroService:
             duration = max(0.01, float(action["dragDuration"]))
             pressed = False
             try:
-                # Own the real cursor only for the card pickup and vertical drag.
+                # Cursor mode has one real system pointer. Keep ownership as short
+                # as possible: jump to card, press, jump vertically, return, release.
                 self.driver.move_to(start_x, start_y)
-                time.sleep(0.008)
+                time.sleep(0.003)
                 self.driver.left_down()
                 pressed = True
-                self.smooth_move(start_x, start_y, up_x, up_y, duration, cancel)
-                # Give the game one tiny frame to enter "dragging skill" state.
-                time.sleep(0.006)
+                self.driver.move_to(up_x, up_y)
+                time.sleep(max(0.001, duration))
             finally:
                 if pressed:
                     # Release must happen at the cursor position sampled at the
