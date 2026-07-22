@@ -22,16 +22,16 @@ export const MACRO_LABELS: Record<MacroType, string> = {
   point: "点位",
   drag: "拖动",
   autoClick: "连点",
-  click: "留空时点击目标点一次；填写 1/2/3 后，按住热键会循环交替执行：选牌键、当前鼠标位置左键。可分别设置单轮内间隔和循环间隔",
+  click: "点击",
   script: "脚本"
 };
 
 export const MACRO_DESCRIPTIONS: Record<MacroType, string> = {
-  point: "按住热键时按下目标点，松开后释放并返回原位置",
-  drag: "按住热键循环执行：从技能卡按下，上拖预设距离，回到触发前鼠标位置释放",
-  autoClick: "按住热键时连续点击目标坐标，松开后停止并返回原鼠标位置",
-  click: "按下热键时点击目标点一次并返回原位置；若填写选牌键，则先模拟 1/2/3 再点击当前鼠标位置",
-  script: "按固定脚本语法执行一组鼠标动作，支持循环到松开热键"
+  point: "按住热键时在目标点按下，松开后释放并返回原鼠标位置。",
+  drag: "按住热键循环执行：从技能卡按下，竖直上拖预设距离，再回到触发前鼠标位置释放。",
+  autoClick: "按住热键时连续点击目标坐标，松开后停止并返回原鼠标位置。",
+  click: "留空选牌键时点击目标点一次；填写 1/2/3 后，按住热键会循环交替执行：选牌键、当前鼠标位置左键。",
+  script: "按固定脚本语法执行一组鼠标动作，支持循环到松开热键。"
 };
 
 export const PRESET_RESOLUTIONS = [
@@ -180,7 +180,7 @@ export function transformActionsToResolution(actions: MacroAction[], from: Resol
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
         dragDuration: normalizeDragDuration(action) || slot.dragDuration,
-        loopGap: action.loopGap || slot.loopGap,
+        loopGap: normalizeLoopGap({ ...action, loopGap: action.loopGap || slot.loopGap }),
         hotkey: action.hotkey || slot.hotkey,
         enabled: action.enabled,
         script: action.script
@@ -206,7 +206,7 @@ export function transformPresetToResolution(preset: MacroPreset, resolution: Res
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
         dragDuration: normalizeDragDuration(action) || slot.dragDuration,
-        loopGap: action.loopGap || slot.loopGap,
+        loopGap: normalizeLoopGap({ ...action, loopGap: action.loopGap || slot.loopGap }),
         hotkey: action.hotkey || slot.hotkey,
         enabled: action.enabled,
         script: action.script
@@ -262,6 +262,12 @@ function normalizeDragDuration(action: MacroAction) {
   return action.dragDuration;
 }
 
+function normalizeLoopGap(action: MacroAction) {
+  const value = Number(action.loopGap);
+  if (action.type === "drag") return Number.isFinite(value) ? Math.max(0.05, value) : 0.05;
+  return Number.isFinite(value) ? Math.max(0.001, value) : 0.005;
+}
+
 export function createAction(seed = Date.now()): MacroAction {
   return {
     id: `macro-${seed}`,
@@ -275,7 +281,7 @@ export function createAction(seed = Date.now()): MacroAction {
     dragDuration: 0.02,
     clickGap: 0.1,
     cardClickGap: 0.005,
-    loopGap: 0.005,
+    loopGap: 0.05,
     enabled: true,
     script: DEFAULT_SCRIPT_MACRO
   };
@@ -296,7 +302,7 @@ export function createSkillDragActions(resolution: Resolution, tuning?: MacroTun
     dragDuration: 0.02,
     clickGap: 0.1,
     cardClickGap: 0.005,
-    loopGap: 0.005,
+    loopGap: 0.05,
     enabled: true,
     script: DEFAULT_SCRIPT_MACRO
   }));
@@ -340,7 +346,7 @@ export function validateConfig(config: MacroConfig): string[] {
     if (action.targetX < 0 || action.targetY < 0) errors.push(`${action.name} 的坐标不能为负数`);
     if (action.targetX > config.resolution.width || action.targetY > config.resolution.height) errors.push(`${action.name} 的坐标超出当前分辨率`);
     if (action.type === "script" && !(action.script || "").trim()) errors.push(`${action.name} 的脚本内容不能为空`);
-    if (action.dragDistance <= 0 || action.dragDuration <= 0 || action.clickGap <= 0 || action.cardClickGap < 0 || action.loopGap <= 0) errors.push(`${action.name} 的数值参数必须大于 0`);
+    if (action.dragDistance <= 0 || action.dragDuration <= 0 || action.clickGap <= 0 || action.cardClickGap < 0 || normalizeLoopGap(action) <= 0) errors.push(`${action.name} 的数值参数必须大于 0`);
   }
   if (!config.actions.some((action) => action.enabled)) errors.push("至少需要启用一条指令");
   return errors;
@@ -414,7 +420,7 @@ function parseAhkAction(block: { hotkey: string; body: string }, index: number):
       dragDuration: Math.max(0.01, ahkNumber(drag[5], 80) / 1000),
       clickGap: 0.1,
     cardClickGap: 0.005,
-    loopGap: 0.005,
+    loopGap: 0.05,
       enabled: true,
       script: DEFAULT_SCRIPT_MACRO
     };
@@ -439,7 +445,7 @@ function parseAhkAction(block: { hotkey: string; body: string }, index: number):
     dragDuration: 0.05,
     clickGap: Math.max(0.03, ahkNumber(sleep?.[1], 100) / 1000),
     cardClickGap: 0.005,
-    loopGap: 0.005,
+    loopGap: 0.05,
     enabled: true,
     script: DEFAULT_SCRIPT_MACRO
   };

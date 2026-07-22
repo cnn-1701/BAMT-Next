@@ -1,4 +1,33 @@
-﻿node_modules/
+﻿# BAMT Next ignore rules
+node_modules/
+dist/
+dist-electron/
+release/
+release-*/
+.python/
+*.log
+*.tmp
+.DS_Store
+blue_archive_config.json
+
+# Local editor / runtime state
+.env
+.env.*
+Thumbs.db
+
+# Local packaged runtime; release builds include it, source repo should not.
+tools/python/
+
+# Local generated data and build output.
+data/config/
+data/presets/
+data/imports/
+data/exports/
+data/timelines/
+data/ahk/
+
+# Historical root ignore rules
+node_modules/
 dist/
 dist-electron/
 release/
@@ -19,3 +48,4 @@ legacy/tkinter-package/**/*.pak
 legacy/tkinter-package/**/*.bin
 legacy/tkinter-package/**/*.dat
 legacy/tkinter-package/**/*.asar
+
