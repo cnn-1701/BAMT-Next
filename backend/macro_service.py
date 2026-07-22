@@ -601,11 +601,11 @@ class MacroService:
         try:
             if action["type"] == "drag":
                 while not self.stop_event.is_set() and self.is_pressed(action["hotkey"]):
-                    # A drag cycle must finish once it starts. Key release stops the next cycle,
-                    # but must not interrupt the return-to-release-point segment.
+                    # Finish one drag cycle once it starts. Releasing the hotkey
+                    # stops the next cycle, not the release point of the current one.
                     self.run_once(action, lambda: self.stop_event.is_set())
-                    # The cursor is back at the trigger position here. Keep it there
-                    # for the configured loop gap before moving to the card again.
+                    # At this point the cursor has returned to the trigger position.
+                    # Wait there before deciding whether to start the next cycle.
                     sleep_cancelable(max(0.05, float(action.get("loopGap", 0.05))), self.stop_event)
                 return
             if action["type"] == "click" and normalize_key(action.get("cardKey", "")):
@@ -703,25 +703,28 @@ class MacroService:
         with self.mouse_lock:
             start_x = int(action["targetX"])
             start_y = int(action["targetY"])
-            end_x, end_y = self.driver.position()
+            release_x, release_y = self.driver.position()
             up_x = start_x
             up_y = clamp(start_y - int(action["dragDistance"]), 0, self.driver.resolution.height - 1)
             duration = max(0.01, float(action["dragDuration"]))
             pressed = False
             try:
+                # Own the real cursor only for the card pickup and vertical drag.
                 self.driver.move_to(start_x, start_y)
-                time.sleep(0.01)
+                time.sleep(0.008)
                 self.driver.left_down()
                 pressed = True
-                self.smooth_move(start_x, start_y, up_x, up_y, duration * 0.3, cancel)
+                self.smooth_move(start_x, start_y, up_x, up_y, duration, cancel)
+                # Give the game one tiny frame to enter "dragging skill" state.
+                time.sleep(0.006)
             finally:
                 if pressed:
-                    # Release must happen at the original trigger cursor position.
-                    # Do not use a cancelable return path, or the button can be
-                    # released midway and the game will reject the card.
-                    self.driver.move_to(end_x, end_y)
+                    # Release must happen at the cursor position sampled at the
+                    # start of this cycle, then stay there during the loop gap.
+                    self.driver.move_to(release_x, release_y)
+                    time.sleep(0.001)
                     self.driver.left_up()
-                self.driver.move_to(end_x, end_y)
+                self.driver.move_to(release_x, release_y)
 
     def sample_release_point(self) -> tuple[int, int]:
         # High-frequency mode: sample once immediately, then keep cursor ownership as short as possible.
