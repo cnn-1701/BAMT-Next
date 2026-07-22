@@ -17,7 +17,6 @@ const api: MacroApi = {
   stopListening: () => ipcRenderer.invoke("macro:stop-listening"),
   testMacro: (action: MacroAction, config: MacroConfig) => ipcRenderer.invoke("macro:test-macro", action, config),
   capturePosition: (delayMs: number) => ipcRenderer.invoke("macro:capture-position", delayMs),
-  openLegacyApp: () => ipcRenderer.invoke("macro:open-legacy-app"),
   openScheduleTool: () => ipcRenderer.invoke("macro:open-schedule-tool"),
   openTimelinePreview: (text: string) => ipcRenderer.invoke("macro:open-timeline-preview", text),
   setTimelinePreviewAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("macro:set-timeline-preview-always-on-top", enabled),

@@ -96,7 +96,6 @@ export interface MacroApi {
   stopListening(): Promise<StatusPayload>;
   testMacro(action: MacroAction, config: MacroConfig): Promise<StatusPayload>;
   capturePosition(delayMs: number): Promise<CapturePayload>;
-  openLegacyApp(): Promise<StatusPayload>;
   openScheduleTool(): Promise<StatusPayload>;
   openTimelinePreview(text: string): Promise<StatusPayload>;
   setTimelinePreviewAlwaysOnTop(enabled: boolean): Promise<StatusPayload>;

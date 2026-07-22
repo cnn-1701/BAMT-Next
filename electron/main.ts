@@ -11,7 +11,8 @@ const resourcesDir = process.resourcesPath;
 const backendDir = isDev ? path.join(appDir, "backend") : path.join(resourcesDir, "backend");
 const preloadPath = path.join(appDir, "dist-electron", "electron", "preload.js");
 const projectDir = isDev ? appDir : path.dirname(process.execPath);
-const dataDir = path.join(projectDir, "data");
+const dataRoot = isDev ? appDir : app.getPath("userData");
+const dataDir = path.join(dataRoot, "data");
 const configDir = path.join(dataDir, "config");
 const presetDir = path.join(dataDir, "presets");
 const presetImportDir = path.join(dataDir, "imports");
@@ -20,8 +21,6 @@ const ahkDataDir = path.join(dataDir, "ahk");
 const timelineDir = path.join(dataDir, "timelines");
 const configPath = path.join(configDir, "blue_archive_config.json");
 const presetLibraryPath = path.join(presetDir, "preset-library.json");
-const legacyConfigPath = path.join(projectDir, "legacy", "tkinter-package", "BAMTb-release", "BAMT", "blue_archive_config.json");
-const legacyExePath = path.join(projectDir, "legacy", "tkinter-package", "BAMTb-release", "BAMT", "BlueArchiveMacroTool.exe");
 
 let mainWindow: BrowserWindow | null = null;
 let backend: MacroBackend | null = null;
@@ -29,13 +28,13 @@ let ahkProcess: ChildProcessWithoutNullStreams | null = null;
 let timelinePreviewWindow: BrowserWindow | null = null;
 
 function pythonCandidates(): string[] {
-  const bundledDevPython = "C:\\Users\\MisonoMika\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe";
   const candidates = [
     process.env.BAMT_PYTHON,
     path.join(appDir, ".python", "python.exe"),
     path.join(projectDir, ".python", "python.exe"),
+    path.join(appDir, "tools", "python", "python.exe"),
+    path.join(projectDir, "tools", "python", "python.exe"),
     path.join(resourcesDir, "python", "python.exe"),
-    fs.existsSync(bundledDevPython) ? bundledDevPython : undefined,
     "py",
     "python",
     "python3"
@@ -91,13 +90,13 @@ function storagePaths() {
     ahkDataDir,
     timelineDir,
     relative: {
-      dataDir: "data",
-      configPath: "data/config/blue_archive_config.json",
-      presetLibraryPath: "data/presets/preset-library.json",
-      presetImportDir: "data/imports",
-      presetExportDir: "data/exports",
-      ahkDataDir: "data/ahk",
-      timelineDir: "data/timelines"
+      dataDir: isDev ? "data" : "%APPDATA%/BAMT Next/data",
+      configPath: isDev ? "data/config/blue_archive_config.json" : "%APPDATA%/BAMT Next/data/config/blue_archive_config.json",
+      presetLibraryPath: isDev ? "data/presets/preset-library.json" : "%APPDATA%/BAMT Next/data/presets/preset-library.json",
+      presetImportDir: isDev ? "data/imports" : "%APPDATA%/BAMT Next/data/imports",
+      presetExportDir: isDev ? "data/exports" : "%APPDATA%/BAMT Next/data/exports",
+      ahkDataDir: isDev ? "data/ahk" : "%APPDATA%/BAMT Next/data/ahk",
+      timelineDir: isDev ? "data/timelines" : "%APPDATA%/BAMT Next/data/timelines"
     }
   };
 }
@@ -184,7 +183,7 @@ class MacroBackend {
   private async spawnWith(command: string, backendPath: string): Promise<void> {
     const args = command === "py" ? ["-3", backendPath] : [backendPath];
     ensureDataDirs();
-    const child = spawn(command, args, { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, BAMT_CONFIG_PATH: configPath, BAMT_LEGACY_CONFIG_PATH: legacyConfigPath, PYTHONIOENCODING: "utf-8" } });
+    const child = spawn(command, args, { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, BAMT_CONFIG_PATH: configPath, PYTHONIOENCODING: "utf-8" } });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
     await new Promise<void>((resolve, reject) => {
@@ -285,11 +284,6 @@ function registerIpc(): void {
   ipcMain.handle("macro:stop-listening", async () => backend!.request<StatusPayload>("stop_listening"));
   ipcMain.handle("macro:test-macro", async (_, action: MacroAction, config: MacroConfig) => backend!.request<StatusPayload>("test_macro", { action, config }));
   ipcMain.handle("macro:capture-position", async (_, delayMs: number) => backend!.request<CapturePayload>("capture_position", { delayMs }));
-  ipcMain.handle("macro:open-legacy-app", async () => {
-    if (!fs.existsSync(legacyExePath)) return { status: "error", message: "Cannot find legacy EXE" };
-    const error = await shell.openPath(legacyExePath);
-    return error ? { status: "error", message: error } : { status: "ready", message: "Legacy tool opened" };
-  });
   ipcMain.handle("macro:open-schedule-tool", async () => ({ status: "ready", message: "排轴编辑器已内置在侧边栏中" }));
   ipcMain.handle("macro:open-timeline-preview", async (_, text: string) => {
     if (timelinePreviewWindow && !timelinePreviewWindow.isDestroyed()) {
@@ -353,4 +347,5 @@ app.whenReady().then(async () => { registerIpc(); await createWindow(); });
 app.on("window-all-closed", () => { backend?.stop(); if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => { backend?.stop(); ahkProcess?.kill(); timelinePreviewWindow?.close(); });
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
+
 

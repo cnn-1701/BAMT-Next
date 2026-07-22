@@ -60,7 +60,6 @@ class BrowserFallbackApi implements MacroApi {
   stopListening = async (): Promise<StatusPayload> => ({ status: "stopped", message: "已停止" });
   testMacro = async (_action: MacroAction): Promise<StatusPayload> => ({ status: "unavailable", message: "浏览器预览不执行鼠标输入" });
   capturePosition = async (): Promise<CapturePayload> => ({ x: 0, y: 0 });
-  openLegacyApp = async (): Promise<StatusPayload> => ({ status: "unavailable", message: "浏览器预览不能打开旧版程序" });
   openScheduleTool = async (): Promise<StatusPayload> => ({ status: "unavailable", message: "浏览器预览不能打开排轴工具" });
   openTimelinePreview = async (text: string): Promise<StatusPayload> => {
     const preview = window.open("", "bamt-timeline-preview", "width=900,height=720");
