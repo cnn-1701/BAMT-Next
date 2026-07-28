@@ -31,11 +31,13 @@ WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 MK_LBUTTON = 0x0001
 WH_KEYBOARD_LL = 13
+WH_MOUSE_LL = 14
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 WM_QUIT = 0x0012
+LLMHF_INJECTED = 0x00000001
 PT_TOUCH = 0x00000002
 POINTER_FLAG_INRANGE = 0x00000002
 POINTER_FLAG_INCONTACT = 0x00000004
@@ -117,6 +119,37 @@ class INPUT_UNION(Union):
 
 class INPUT(Structure):
     _fields_ = [("type", c_ulong), ("ii", INPUT_UNION)]
+
+
+class KBDLLHOOKSTRUCT(Structure):
+    _fields_ = [
+        ("vkCode", wintypes.DWORD),
+        ("scanCode", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class MSLLHOOKSTRUCT(Structure):
+    _fields_ = [
+        ("pt", POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class MSG(Structure):
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", POINT),
+    ]
 
 
 @dataclass
@@ -466,6 +499,126 @@ class LowLevelKeyboardState:
                     pass
                 self.hook = None
 
+
+class LowLevelMouseCapture:
+    def __init__(self) -> None:
+        self.user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.lock = threading.RLock()
+        self.hook = None
+        self.thread: threading.Thread | None = None
+        self.thread_id = 0
+        self.ready = threading.Event()
+        self.running = False
+        self.active = False
+        self.virtual_x = 0
+        self.virtual_y = 0
+        self.delta_x = 0
+        self.delta_y = 0
+        self.max_step = 120
+        self.max_total = 520
+        self._proc = None
+
+    def start(self) -> None:
+        if self.thread and self.thread.is_alive():
+            return
+        self.ready.clear()
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        self.ready.wait(timeout=0.8)
+
+    def stop(self) -> None:
+        self.running = False
+        with self.lock:
+            self.active = False
+            hook = self.hook
+            thread_id = self.thread_id
+            self.hook = None
+        if hook:
+            try:
+                self.user32.UnhookWindowsHookEx(hook)
+            except Exception:
+                pass
+        if thread_id:
+            try:
+                self.user32.PostThreadMessageW(thread_id, WM_QUIT, 0, 0)
+            except Exception:
+                pass
+
+    def begin(self, expected_x: int, expected_y: int) -> None:
+        with self.lock:
+            self.virtual_x = int(expected_x)
+            self.virtual_y = int(expected_y)
+            self.delta_x = 0
+            self.delta_y = 0
+            self.active = True
+
+    def set_expected(self, expected_x: int, expected_y: int) -> None:
+        with self.lock:
+            self.virtual_x = int(expected_x)
+            self.virtual_y = int(expected_y)
+
+    def finish(self) -> tuple[int, int]:
+        with self.lock:
+            self.active = False
+            return int(self.delta_x), int(self.delta_y)
+
+    def _accept_delta(self, dx: int, dy: int) -> bool:
+        return abs(dx) <= self.max_step and abs(dy) <= self.max_step
+
+    def _run(self) -> None:
+        self.thread_id = int(self.kernel32.GetCurrentThreadId())
+        HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+        def callback(n_code: int, w_param: int, l_param: int) -> int:
+            if n_code >= 0 and int(w_param) == WM_MOUSEMOVE:
+                info = ctypes.cast(l_param, POINTER(MSLLHOOKSTRUCT)).contents
+                injected = bool(int(info.flags) & LLMHF_INJECTED)
+                with self.lock:
+                    if self.active and not injected:
+                        dx = int(info.pt.x) - self.virtual_x
+                        dy = int(info.pt.y) - self.virtual_y
+                        if self._accept_delta(dx, dy):
+                            self.delta_x = clamp(self.delta_x + dx, -self.max_total, self.max_total)
+                            self.delta_y = clamp(self.delta_y + dy, -self.max_total, self.max_total)
+                        self.virtual_x = int(info.pt.x)
+                        self.virtual_y = int(info.pt.y)
+                        return 1
+            return int(self.user32.CallNextHookEx(None, n_code, w_param, l_param))
+
+        self._proc = HOOKPROC(callback)
+        self.user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, ctypes.c_void_p, wintypes.DWORD]
+        self.user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        self.user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        self.user32.CallNextHookEx.restype = ctypes.c_long
+        self.user32.GetMessageW.argtypes = [POINTER(MSG), ctypes.c_void_p, wintypes.UINT, wintypes.UINT]
+        self.user32.GetMessageW.restype = ctypes.c_int
+        self.user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        self.user32.PostThreadMessageW.restype = ctypes.c_int
+
+        hook = self.user32.SetWindowsHookExW(WH_MOUSE_LL, self._proc, self.kernel32.GetModuleHandleW(None), 0)
+        with self.lock:
+            self.hook = hook
+        if not hook:
+            emit("log", {"level": "warn", "message": "低层鼠标 Hook 启动失败：" + str(ctypes.get_last_error())})
+            self.ready.set()
+            return
+        emit("log", {"level": "info", "message": "低层鼠标 Hook 已启动"})
+        self.ready.set()
+        msg = MSG()
+        while self.running and self.user32.GetMessageW(byref(msg), None, 0, 0) > 0:
+            pass
+        with self.lock:
+            self.active = False
+            if self.hook:
+                try:
+                    self.user32.UnhookWindowsHookEx(self.hook)
+                except Exception:
+                    pass
+                self.hook = None
+
+
 class MacroService:
     def __init__(self) -> None:
         self.config_path = Path(os.environ.get("BAMT_CONFIG_PATH", "blue_archive_config.json"))
@@ -480,6 +633,7 @@ class MacroService:
         self.blocked_keys: set[str] = set()
         self.active_points: dict[str, tuple[int, int]] = {}
         self.keyboard_state = LowLevelKeyboardState()
+        self.mouse_capture = LowLevelMouseCapture()
 
     def handle(self, command: str, payload: Any) -> Any:
         if command == "get_initial_config":
@@ -523,6 +677,7 @@ class MacroService:
                 emit("log", {"level": "warn", "message": "BAMT 当前不是管理员。若游戏以管理员或更高权限运行，热键或输入注入可能会被 Windows 拦截。"})
             self.stop_event.clear()
             self.keyboard_state.start()
+            self.mouse_capture.start()
             self.block_keys()
             self.listen_thread = threading.Thread(target=self.listen_loop, daemon=True)
             self.listen_thread.start()
@@ -535,6 +690,7 @@ class MacroService:
             self.listen_thread.join(timeout=0.6)
         self.release_points()
         self.driver.release_all()
+        self.mouse_capture.stop()
         self.unblock_keys()
         self.worker_threads = [thread for thread in self.worker_threads if thread.is_alive()]
         if emit_status:
@@ -706,26 +862,38 @@ class MacroService:
             release_x, release_y = self.driver.position()
             up_x = start_x
             up_y = clamp(start_y - int(action["dragDistance"]), 0, self.driver.resolution.height - 1)
-            duration = max(0.01, float(action["dragDuration"]))
+            duration = max(0.001, float(action["dragDuration"]))
             pressed = False
+            capture_mouse = self.driver.mode == "cursor" and hasattr(self, "mouse_capture")
+            if capture_mouse:
+                self.mouse_capture.begin(release_x, release_y)
             try:
-                # Cursor mode has one real system pointer. Keep ownership as short
-                # as possible: jump to card, press, jump vertically, return, release.
+                # Cursor mode owns one real pointer. Low-level mouse capture keeps
+                # physical mouse motion from racing Windows during this short drag
+                # window, then replays the captured displacement into the release.
                 self.driver.move_to(start_x, start_y)
+                if capture_mouse:
+                    self.mouse_capture.set_expected(start_x, start_y)
                 time.sleep(0.003)
                 self.driver.left_down()
                 pressed = True
                 self.driver.move_to(up_x, up_y)
-                time.sleep(max(0.001, duration))
+                if capture_mouse:
+                    self.mouse_capture.set_expected(up_x, up_y)
+                time.sleep(duration)
             finally:
+                if capture_mouse:
+                    self.mouse_capture.finish()
                 if pressed:
-                    # Release must happen at the cursor position sampled at the
-                    # start of this cycle, then stay there during the loop gap.
+                    # Keep the button down while returning to the sampled release
+                    # point. The game must see left-up there, not at the vertical
+                    # drag endpoint above the card.
                     self.driver.move_to(release_x, release_y)
-                    time.sleep(0.001)
+                    if capture_mouse:
+                        self.mouse_capture.set_expected(release_x, release_y)
+                    time.sleep(0.006)
                     self.driver.left_up()
                 self.driver.move_to(release_x, release_y)
-
     def sample_release_point(self) -> tuple[int, int]:
         # High-frequency mode: sample once immediately, then keep cursor ownership as short as possible.
         return self.driver.position()
