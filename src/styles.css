@@ -1953,3 +1953,5 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
     width: calc((100% - 12px) / 2);
   }
 }
+
+

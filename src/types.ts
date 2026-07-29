@@ -1,4 +1,4 @@
-export type MacroType = "point" | "drag" | "autoClick" | "click" | "script";
+export type MacroType = "point" | "drag" | "autoClick" | "click" | "fastPlay" | "script";
 export type BackendStatus = "booting" | "ready" | "listening" | "stopped" | "error" | "unavailable";
 export type InputBackend = "cursor" | "windowMessage" | "touch";
 
