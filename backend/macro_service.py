@@ -175,6 +175,7 @@ def is_process_admin() -> bool:
         return False
 
 
+
 def foreground_window_title() -> str:
     try:
         hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -677,7 +678,6 @@ class MacroService:
                 emit("log", {"level": "warn", "message": "BAMT 当前不是管理员。若游戏以管理员或更高权限运行，热键或输入注入可能会被 Windows 拦截。"})
             self.stop_event.clear()
             self.keyboard_state.start()
-            self.mouse_capture.start()
             self.block_keys()
             self.listen_thread = threading.Thread(target=self.listen_loop, daemon=True)
             self.listen_thread.start()
@@ -756,18 +756,25 @@ class MacroService:
         emit("execution", {"actionId": action["id"], "actionName": action["name"], "phase": "start"})
         try:
             if action["type"] == "drag":
-                while not self.stop_event.is_set() and self.is_pressed(action["hotkey"]):
-                    # Finish one drag cycle once it starts. Releasing the hotkey
-                    # stops the next cycle, not the release point of the current one.
-                    self.run_once(action, lambda: self.stop_event.is_set())
-                    # At this point the cursor has returned to the trigger position.
-                    # Wait there before deciding whether to start the next cycle.
-                    sleep_cancelable(max(0.001, float(action.get("loopGap", 0.005))), self.stop_event)
+                capture_mouse = self.driver.mode == "cursor" and hasattr(self, "mouse_capture")
+                if capture_mouse:
+                    self.mouse_capture.start()
+                try:
+                    while not self.stop_event.is_set() and self.is_pressed(action["hotkey"]):
+                        # Finish one drag cycle once it starts. Releasing the hotkey
+                        # stops the next cycle, not the release point of the current one.
+                        self.run_once(action, lambda: self.stop_event.is_set())
+                        # At this point the cursor has returned to the trigger position.
+                        # Wait there before deciding whether to start the next cycle.
+                        sleep_cancelable(max(0.001, float(action.get("loopGap", 0.005))), self.stop_event)
+                finally:
+                    if capture_mouse:
+                        self.mouse_capture.stop()
                 return
-            if action["type"] == "click" and normalize_key(action.get("cardKey", "")):
+            if action["type"] == "fastPlay":
                 while not self.stop_event.is_set() and self.is_pressed(action["hotkey"]):
                     self.run_once(action, lambda: self.stop_event.is_set() or not self.is_pressed(action["hotkey"]))
-                    sleep_cancelable(float(action.get("loopGap", 0.005)), self.stop_event)
+                    sleep_cancelable(float(action.get("loopGap", 0.001)), self.stop_event)
                 return
             if action["type"] == "click":
                 self.run_once(action, lambda: self.stop_event.is_set())
@@ -788,6 +795,8 @@ class MacroService:
             self.release_point(action)
         elif action["type"] == "click":
             self.click_action(action)
+        elif action["type"] == "fastPlay":
+            self.fast_play_action(action)
         elif action["type"] == "drag":
             self.drag(action, cancel)
         elif action["type"] == "autoClick":
@@ -816,6 +825,8 @@ class MacroService:
         original = self.active_points.pop(action["id"], None)
         if original is None:
             return
+        self.driver.move_to(action["targetX"], action["targetY"])
+        time.sleep(0.01)
         self.driver.left_up()
         time.sleep(0.02)
         self.driver.move_to(*original)
@@ -831,18 +842,20 @@ class MacroService:
         self.active_points.clear()
 
     def click_action(self, action: dict[str, Any]) -> None:
-        card_key = normalize_key(action.get("cardKey", ""))
-        if card_key:
-            self.card_key_click(card_key, action)
-            return
         self.click_at(action["targetX"], action["targetY"])
+
+    def fast_play_action(self, action: dict[str, Any]) -> None:
+        card_key = normalize_key(action.get("cardKey", ""))
+        if not card_key:
+            raise ValueError("fastPlay requires cardKey 1/2/3")
+        self.card_key_click(card_key, action)
 
     def card_key_click(self, card_key: str, action: dict[str, Any]) -> None:
         # One click-macro cycle: tap 1/2/3, then click the current cursor position.
         # run_while_pressed repeats this function while the hotkey is held.
         with self.mouse_lock:
             self.driver.tap_key(card_key, 0.004)
-            time.sleep(max(0.0, min(0.2, float(action.get("cardClickGap", 0.005)))))
+            time.sleep(max(0.0, min(0.2, float(action.get("cardClickGap", 0.010)))))
             self.driver.click_current(0.006)
 
     def click_at(self, x: int, y: int) -> None:
@@ -854,6 +867,17 @@ class MacroService:
             time.sleep(0.02)
             self.driver.move_to(*original)
 
+
+    def settle_cursor_at(self, x: int, y: int, timeout: float = 0.035, tolerance: int = 2) -> None:
+        if self.driver.mode != "cursor":
+            return
+        deadline = time.perf_counter() + max(0.001, timeout)
+        while time.perf_counter() < deadline:
+            cx, cy = self.driver.position()
+            if abs(cx - int(x)) <= tolerance and abs(cy - int(y)) <= tolerance:
+                return
+            self.driver.move_to(int(x), int(y))
+            time.sleep(0.001)
 
     def drag(self, action: dict[str, Any], cancel: Callable[[], bool]) -> None:
         with self.mouse_lock:
@@ -874,26 +898,32 @@ class MacroService:
                 self.driver.move_to(start_x, start_y)
                 if capture_mouse:
                     self.mouse_capture.set_expected(start_x, start_y)
-                time.sleep(0.003)
+                self.settle_cursor_at(start_x, start_y)
                 self.driver.left_down()
                 pressed = True
+                time.sleep(0.006)
                 self.driver.move_to(up_x, up_y)
                 if capture_mouse:
                     self.mouse_capture.set_expected(up_x, up_y)
                 time.sleep(duration)
             finally:
-                if capture_mouse:
-                    self.mouse_capture.finish()
-                if pressed:
-                    # Keep the button down while returning to the sampled release
-                    # point. The game must see left-up there, not at the vertical
-                    # drag endpoint above the card.
+                try:
+                    if pressed:
+                        # Keep mouse capture active until after left-up. Otherwise
+                        # physical motion can race the final return and the game may
+                        # receive the release at the vertical drag endpoint.
+                        self.driver.move_to(release_x, release_y)
+                        if capture_mouse:
+                            self.mouse_capture.set_expected(release_x, release_y)
+                        self.settle_cursor_at(release_x, release_y)
+                        time.sleep(0.006)
+                        self.driver.left_up()
                     self.driver.move_to(release_x, release_y)
                     if capture_mouse:
                         self.mouse_capture.set_expected(release_x, release_y)
-                    time.sleep(0.006)
-                    self.driver.left_up()
-                self.driver.move_to(release_x, release_y)
+                finally:
+                    if capture_mouse:
+                        self.mouse_capture.finish()
     def sample_release_point(self) -> tuple[int, int]:
         # High-frequency mode: sample once immediately, then keep cursor ownership as short as possible.
         return self.driver.position()
@@ -1176,18 +1206,18 @@ def create_skill_drag_actions(resolution: Dict[str, int], tuning: Dict[str, Any]
     actions: List[Dict[str, Any]] = []
     for index, slot in enumerate(slots, start=1):
         actions.append({
-            "id": "skill-drag-" + str(index),
-            "name": "Skill Drag " + str(index),
+            "id": "skill-fast-play-" + str(index),
+            "name": "Fast Play " + str(index),
             "hotkey": ["q", "w", "e"][index - 1],
-            "type": "drag",
-            "cardKey": "",
+            "type": "fastPlay",
+            "cardKey": str(index),
             "targetX": slot["x"],
             "targetY": slot["y"],
             "dragDistance": 300,
             "dragDuration": 0.02,
             "clickGap": 0.1,
-            "cardClickGap": 0.005,
-            "loopGap": 0.05,
+            "cardClickGap": 0.010,
+            "loopGap": 0.001,
             "enabled": True,
             "script": default_script_macro(),
         })
@@ -1230,11 +1260,13 @@ def normalize_action(data: dict[str, Any], index: int) -> dict[str, Any]:
     type_map = {"鐐逛綅": "point", "鎷栧姩": "drag", "杩炵偣": "autoClick", "鐐瑰嚮": "click", "鑴氭湰": "script"}
     action_type = type_map.get(str(data.get("type")), data.get("type", "point"))
     slot_index = skill_slot_index(data)
-    if action_type not in {"point", "drag", "autoClick", "click", "script"}:
+    if action_type == "click" and normalize_card_key(data.get("cardKey", data.get("card_key", ""))):
+        action_type = "fastPlay"
+    if action_type not in {"point", "drag", "autoClick", "click", "fastPlay", "script"}:
         action_type = "point"
     hotkey = normalize_key(data.get("hotkey", "q"))
     card_key = normalize_card_key(data.get("cardKey", data.get("card_key", "")))
-    loop_gap = to_float(data.get("loopGap", data.get("loop_gap")), 0.05 if action_type == "drag" else 0.005)
+    loop_gap = to_float(data.get("loopGap", data.get("loop_gap")), 0.05 if action_type == "drag" else 0.001)
     if action_type == "drag":
         loop_gap = max(0.05, loop_gap)
     return {
@@ -1248,7 +1280,7 @@ def normalize_action(data: dict[str, Any], index: int) -> dict[str, Any]:
         "dragDistance": to_int(data.get("dragDistance", data.get("drag_dist")), 300),
         "dragDuration": normalize_drag_duration(data, action_type),
         "clickGap": to_float(data.get("clickGap", data.get("click_gap")), 0.1),
-        "cardClickGap": to_float(data.get("cardClickGap", data.get("card_click_gap")), 0.005),
+        "cardClickGap": to_float(data.get("cardClickGap", data.get("card_click_gap")), 0.010 if action_type == "fastPlay" else 0.005),
         "loopGap": loop_gap,
         "enabled": data.get("enabled", True) is not False,
         "script": str(data.get("script") or default_script_macro()),
@@ -1257,7 +1289,7 @@ def normalize_action(data: dict[str, Any], index: int) -> dict[str, Any]:
 
 def skill_slot_index(data: dict[str, Any]) -> int:
     raw_id = str(data.get("id", ""))
-    if raw_id.startswith("skill-drag-"):
+    if raw_id.startswith("skill-drag-") or raw_id.startswith("skill-fast-play-"):
         try:
             index = int(raw_id.rsplit("-", 1)[1]) - 1
             return index if 0 <= index <= 2 else -1

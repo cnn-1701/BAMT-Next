@@ -27,7 +27,7 @@ import { TimelinePlanner } from "./TimelinePlanner";
 import type { BackendEvent, BackendStatus, MacroAction, MacroConfig, MacroType } from "./types";
 import blueArchiveLogo from "./assets/blue-archive-logo-jp.svg";
 
-const typeIcons: Record<MacroType, typeof Crosshair> = { point: Crosshair, drag: Hand, autoClick: Zap, click: MousePointerClick, script: Code2 };
+const typeIcons: Record<MacroType, typeof Crosshair> = { point: Crosshair, drag: Hand, autoClick: Zap, click: MousePointerClick, fastPlay: Play, script: Code2 };
 const backgroundModules = import.meta.glob("./assets/backgrounds/*.{png,jpg,jpeg,webp,avif}", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
 
 function pickBackgroundIndex(length: number) {
@@ -447,10 +447,10 @@ export function App() {
               <div className="type-grid">{(Object.keys(MACRO_LABELS) as MacroType[]).map((type) => { const Icon = typeIcons[type]; return <button key={type} className={selected.type === type ? "type-card active" : "type-card"} onClick={() => patchSelected({ type })} title={MACRO_DESCRIPTIONS[type]}><Icon size={20} />{MACRO_LABELS[type]}</button>; })}</div>
               <div className="field-row"><label>X<input type="number" value={selected.targetX} onChange={(event) => patchSelected({ targetX: Number(event.target.value) })} /></label><label>Y<input type="number" value={selected.targetY} onChange={(event) => patchSelected({ targetY: Number(event.target.value) })} /></label><button className="capture" onClick={capture}><Crosshair size={17} />捕获</button></div>
               {selected.type === "drag" && <div className="field-row"><label>距离<input type="number" value={selected.dragDistance} onChange={(event) => patchSelected({ dragDistance: Number(event.target.value) })} /></label><label>时长<input type="number" step="0.001" value={selected.dragDuration} onChange={(event) => patchSelected({ dragDuration: Number(event.target.value) })} /></label></div>}
-              {selected.type === "click" && <label>选牌键<input value={selected.cardKey || ""} placeholder="留空=普通坐标点击；1/2/3=循环交替：选牌键、鼠标左键" onChange={(event) => patchSelected({ cardKey: event.target.value.trim() })} /></label>}
+              {selected.type === "fastPlay" && <label>选牌键<input value={selected.cardKey || ""} placeholder="1 / 2 / 3" onChange={(event) => patchSelected({ cardKey: event.target.value.trim() })} /></label>}
               {selected.type === "script" && <label className="script-editor-label">脚本内容<textarea className="macro-script-editor" value={selected.script || ""} onChange={(event) => patchSelected({ script: event.target.value })} spellCheck={false} /></label>}
               {selected.type === "drag" && <label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.05} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label>}
-              {selected.type === "click" && <div className="field-row"><label>单轮内间隔<input type="number" step="0.001" value={selected.cardClickGap ?? 0.005} onChange={(event) => patchSelected({ cardClickGap: Number(event.target.value) })} /></label><label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.005} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label></div>}
+              {selected.type === "fastPlay" && <div className="field-row"><label>单轮内间隔<input type="number" step="0.001" value={selected.cardClickGap ?? 0.010} onChange={(event) => patchSelected({ cardClickGap: Number(event.target.value) })} /></label><label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.001} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label></div>}
               {selected.type === "autoClick" && <label>连点间隔<input type="number" step="0.01" value={selected.clickGap} onChange={(event) => patchSelected({ clickGap: Number(event.target.value) })} /></label>}
               <div className="action-row"><button className="primary ghost" onClick={testSelected} disabled={errors.length > 0}><Play size={17} />测试</button><button className="danger ghost" onClick={removeSelected}><Trash2 size={17} />删除</button></div>
               {captureText && <p className="hint">{captureText}</p>}
@@ -473,6 +473,7 @@ export function App() {
             <div className="log-box"><h3>状态记录</h3>{logs.length === 0 ? <p>等待操作</p> : logs.map((log, index) => <p key={`${log}-${index}`}>{log}</p>)}</div>
           </section>
         </section>
+
 
         {activeSection === "timeline" && <TimelinePlanner api={api} pushLog={pushLog} />}
         {activeSection === "ahk" && <AhkConsole api={api} pushLog={pushLog} />}

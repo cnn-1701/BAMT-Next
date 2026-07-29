@@ -19,19 +19,21 @@ export interface MacroPresetPackage {
 }
 
 export const MACRO_LABELS: Record<MacroType, string> = {
-  point: "点位",
-  drag: "拖动",
-  autoClick: "连点",
-  click: "点击",
-  script: "脚本"
+  point: "\u70b9\u4f4d",
+  drag: "\u62d6\u52a8",
+  autoClick: "\u8fde\u70b9",
+  click: "\u70b9\u51fb",
+  fastPlay: "\u6700\u901f\u51fa\u724c",
+  script: "\u811a\u672c"
 };
 
 export const MACRO_DESCRIPTIONS: Record<MacroType, string> = {
-  point: "按住热键时在目标点按下，松开后释放并返回原鼠标位置。",
-  drag: "按住热键循环执行：从技能卡按下，竖直上拖预设距离，再回到触发前鼠标位置释放。",
-  autoClick: "按住热键时连续点击目标坐标，松开后停止并返回原鼠标位置。",
-  click: "留空选牌键时点击目标点一次；填写 1/2/3 后，按住热键会循环交替执行：选牌键、当前鼠标位置左键。",
-  script: "按固定脚本语法执行一组鼠标动作，支持循环到松开热键。"
+  point: "\u6309\u4e0b\u70ed\u952e\u65f6\u79fb\u52a8\u5230\u76ee\u6807\u70b9\u5e76\u6309\u4f4f\uff1b\u677e\u5f00\u70ed\u952e\u540e\u5148\u56de\u5230\u76ee\u6807\u70b9\u91ca\u653e\uff0c\u518d\u8fd4\u56de\u539f\u9f20\u6807\u4f4d\u7f6e\u3002",
+  drag: "\u6309\u4f4f\u70ed\u952e\u5faa\u73af\u6267\u884c\uff1a\u4ece\u6280\u80fd\u5361\u6309\u4e0b\uff0c\u7ad6\u76f4\u4e0a\u62d6\u9884\u8bbe\u8ddd\u79bb\uff0c\u518d\u56de\u5230\u89e6\u53d1\u524d\u9f20\u6807\u4f4d\u7f6e\u91ca\u653e\u3002",
+  autoClick: "\u6309\u4f4f\u70ed\u952e\u65f6\u8fde\u7eed\u70b9\u51fb\u76ee\u6807\u5750\u6807\uff0c\u677e\u5f00\u540e\u505c\u6b62\u5e76\u8fd4\u56de\u539f\u9f20\u6807\u4f4d\u7f6e\u3002",
+  click: "点击目标坐标一次。",
+  fastPlay: "按住热键循环执行：先模拟 1/2/3 选中手牌，再点击当前鼠标位置。",
+  script: "\u6309\u56fa\u5b9a\u811a\u672c\u8bed\u6cd5\u6267\u884c\u4e00\u7ec4\u9f20\u6807\u52a8\u4f5c\uff0c\u652f\u6301\u5faa\u73af\u5230\u677e\u5f00\u70ed\u952e\u3002"
 };
 
 export const PRESET_RESOLUTIONS = [
@@ -157,9 +159,9 @@ export function isSkillDragAction(action: MacroAction) {
 }
 
 function skillSlotIndex(action: MacroAction) {
-  const idMatch = /^skill-drag-(\d+)$/.exec(action.id);
+  const idMatch = /^skill-(?:drag|fast-play)-(\d+)$/.exec(action.id);
   if (idMatch) return Number(idMatch[1]) - 1;
-const nameMatch = /(?:\u6280\u80fd\u62d6\u52a8|\u624b\u724c|\u6280\u80fd\u724c)\s*(\d+)/.exec(action.name);
+const nameMatch = /(?:\u6280\u80fd\u62d6\u52a8|\u6700\u901f\u51fa\u724c|\u624b\u724c|\u6280\u80fd\u724c)\s*(\d+)/.exec(action.name);
   if (nameMatch) return Number(nameMatch[1]) - 1;
   return -1;
 }
@@ -174,8 +176,8 @@ export function transformActionsToResolution(actions: MacroAction[], from: Resol
         ...action,
         id: action.id || slot.id,
         name: action.name || slot.name,
-        type: "drag" as const,
-        cardKey: "",
+        type: slot.type,
+        cardKey: slot.cardKey,
         targetX: slot.targetX,
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
@@ -200,8 +202,8 @@ export function transformPresetToResolution(preset: MacroPreset, resolution: Res
         ...action,
         id: action.id || slot.id,
         name: action.name || slot.name,
-        type: "drag" as const,
-        cardKey: "",
+        type: slot.type,
+        cardKey: slot.cardKey,
         targetX: slot.targetX,
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
@@ -271,7 +273,7 @@ function normalizeLoopGap(action: MacroAction) {
 export function createAction(seed = Date.now()): MacroAction {
   return {
     id: `macro-${seed}`,
-    name: "指令",
+    name: "\u6307\u4ee4",
     hotkey: "q",
     type: "point",
     cardKey: "",
@@ -291,18 +293,18 @@ export function createSkillDragActions(resolution: Resolution, tuning?: MacroTun
   const slots = calculateSkillSlots(resolution, tuning);
   const keys = ["q", "w", "e"];
   return slots.map((slot, index) => ({
-    id: `skill-drag-${index + 1}`,
-    name: `技能拖动 ${index + 1}`,
+    id: `skill-fast-play-${index + 1}`,
+    name: `最速出牌 ${index + 1}`,
     hotkey: keys[index],
-    type: "drag",
-    cardKey: "",
+    type: "fastPlay",
+    cardKey: String(index + 1),
     targetX: slot.x,
     targetY: slot.y,
     dragDistance: 300,
     dragDuration: 0.02,
     clickGap: 0.1,
-    cardClickGap: 0.005,
-    loopGap: 0.05,
+    cardClickGap: 0.010,
+    loopGap: 0.001,
     enabled: true,
     script: DEFAULT_SCRIPT_MACRO
   }));
@@ -464,3 +466,4 @@ export function parseAhkMacroPackage(script: string, filename: string, fallbackR
     actions
   }]);
 }
+
