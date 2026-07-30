@@ -770,9 +770,6 @@ class MacroService:
 
     def on_key_down(self, action: dict[str, Any]) -> None:
         emit("log", {"level": "info", "message": f"检测到热键：{action['hotkey']} -> {action['name']} ({action['type']}) foreground={foreground_window_title()}"})
-        if action["type"] == "point":
-            self.start_point(action)
-            return
         runtime_action = dict(action)
         thread = threading.Thread(target=self.run_while_pressed, args=(runtime_action,), daemon=True)
         self.worker_threads.append(thread)
@@ -780,8 +777,7 @@ class MacroService:
 
     def on_key_up(self, action: dict[str, Any]) -> None:
         if action["type"] == "point":
-            self.release_point(action)
-
+            return
     def run_while_pressed(self, action: dict[str, Any]) -> None:
         emit("execution", {"actionId": action["id"], "actionName": action["name"], "phase": "start"})
         try:

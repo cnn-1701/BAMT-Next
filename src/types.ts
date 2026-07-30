@@ -101,8 +101,6 @@ export interface MacroApi {
   setTimelinePreviewAlwaysOnTop(enabled: boolean): Promise<StatusPayload>;
   runAhkScript(script: string): Promise<StatusPayload>;
   stopAhkScript(): Promise<StatusPayload>;
-  runRustFastPlayDemo(): Promise<StatusPayload>;
-  stopRustFastPlayDemo(): Promise<StatusPayload>;
   onEvent(listener: (event: BackendEvent) => void): () => void;
 }
 
