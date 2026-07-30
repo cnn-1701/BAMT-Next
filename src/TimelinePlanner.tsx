@@ -301,6 +301,7 @@ function download(filename: string, text: string, type = "text/plain") {
 export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (message: string) => void }) {
   const [title, setTitle] = useState("总力战轴");
   const [timelineFileName, setTimelineFileName] = useState("总力战轴");
+  const [draftTimelineFileName, setDraftTimelineFileName] = useState("总力战轴");
   const [phases, setPhases] = useState<PhaseState[]>([createPhase("P1", defaultStudents)]);
   const [activePhaseIndex, setActivePhaseIndex] = useState(0);
   const [saveState, setSaveState] = useState("等待自动保存");
@@ -351,11 +352,11 @@ export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (mes
   }
 
   function createNewTimeline() {
-    const baseName = safeFileName(timelineFileName || title || "总力战轴");
-    const nextName = baseName + "-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const nextName = safeFileName(draftTimelineFileName || title || "总力战轴");
     const nextPhase = createPhase("P1", defaultStudents);
     setTitle(nextName);
     setTimelineFileName(nextName);
+    setDraftTimelineFileName(nextName);
     setPhases([nextPhase]);
     setActivePhaseIndex(0);
     autoSaveReady.current = true;
@@ -363,6 +364,17 @@ export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (mes
       .then((result) => setSaveState(result.message))
       .catch((error) => setSaveState("新建失败：" + String(error instanceof Error ? error.message : error)));
     pushLog("已新建排轴文件：" + nextName + ".json");
+  }
+
+  function confirmTimelineFileName() {
+    const nextName = safeFileName(draftTimelineFileName || title || "总力战轴");
+    setTimelineFileName(nextName);
+    setDraftTimelineFileName(nextName);
+    autoSaveReady.current = true;
+    void api.saveTimelineFile(nextName + ".json", { ...timelinePayload, fileName: nextName, updatedAt: new Date().toISOString() })
+      .then((result) => setSaveState(result.message))
+      .catch((error) => setSaveState("文件名保存失败：" + String(error instanceof Error ? error.message : error)));
+    pushLog("已确认排轴文件名：" + nextName + ".json");
   }
 
   async function openTimelineFile() {
@@ -373,7 +385,9 @@ export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (mes
       ? data.phases.map((phase: Partial<PhaseState>, index: number) => normalizePhase(phase, index))
       : [createPhase("P1", defaultStudents)];
     setTitle(String(data.title || file.name.replace(/\.json$/i, "") || "总力战轴"));
-    setTimelineFileName(String(data.fileName || file.name.replace(/\.json$/i, "") || data.title || "总力战轴"));
+    const nextFileName = String(data.fileName || file.name.replace(/\.json$/i, "") || data.title || "总力战轴");
+    setTimelineFileName(nextFileName);
+    setDraftTimelineFileName(nextFileName);
     setPhases(importedPhases);
     setActivePhaseIndex(Math.max(0, Math.min(Number(data.activePhaseIndex || 0), importedPhases.length - 1)));
     pushLog("已打开排轴文件：" + file.name);
@@ -572,7 +586,9 @@ export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (mes
           ? data.teams.map((team: Partial<PhaseState>, index: number) => normalizePhase({ ...team, entries: index === 0 && Array.isArray(data.entries) ? data.entries : [] }, index))
           : [createPhase("P1", defaultStudents)];
       setTitle(String(data.title || "总力战轴"));
-      setTimelineFileName(String(data.fileName || file.name.replace(/\.json$/i, "") || data.title || "总力战轴"));
+      const nextFileName = String(data.fileName || file.name.replace(/\.json$/i, "") || data.title || "总力战轴");
+      setTimelineFileName(nextFileName);
+      setDraftTimelineFileName(nextFileName);
       setPhases(importedPhases);
       setActivePhaseIndex(Math.max(0, Math.min(Number(data.activePhaseIndex || 0), importedPhases.length - 1)));
       pushLog("已导入排轴 JSON");
@@ -599,7 +615,7 @@ export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (mes
         </div>
 
         <div className="timeline-team-grid phase-top-grid">
-          <label>文件名<input value={timelineFileName} onChange={(event) => setTimelineFileName(event.target.value)} /></label>
+          <label>文件名<div className="capture-field timeline-file-field"><input value={draftTimelineFileName} onChange={(event) => setDraftTimelineFileName(event.target.value)} /><button className="timeline-confirm-button" onClick={confirmTimelineFileName}>确认文件名</button></div></label>
           <label>轴名称<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
           <p className="hint autosave-hint">{saveState}；保存目录：data/timelines</p>
           <label>当前 P 名称<input value={activePhase.title} onChange={(event) => patchPhase(activePhaseIndex, { title: event.target.value || "P" + (activePhaseIndex + 1) })} /></label>

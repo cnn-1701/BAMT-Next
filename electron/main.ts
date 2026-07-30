@@ -104,20 +104,20 @@ function escapeHtml(value: string): string {
 }
 
 function timelinePreviewHtml(text: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><title>鎺掕酱鏂囨湰棰勮</title><style>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>排轴文本预览</title><style>
     body{margin:0;background:#f5f9fc;color:#18324a;font-family:"Microsoft YaHei",Segoe UI,sans-serif;}
     header{position:sticky;top:0;display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(245,249,252,.94);backdrop-filter:blur(12px);border-bottom:1px solid #d6e6f3;padding:14px 18px;}
     h1{margin:0;font-size:20px;} button{min-height:36px;padding:0 14px;border:1px solid #9fc8e8;border-radius:8px;background:#e8f6ff;color:#0b73af;font-weight:800;cursor:pointer;}
     button.active{background:#17314a;color:white;border-color:#17314a;} pre{white-space:pre-wrap;margin:0;padding:22px 24px;font:18px/1.78 Consolas,"Microsoft YaHei",monospace;}
-  </style></head><body><header><h1>鎺掕酱鏂囨湰棰勮</h1><button id="topmost" class="active">缃《宸插紑鍚?/button></header><pre>${escapeHtml(text)}</pre><script>
+  </style></head><body><header><h1>排轴文本预览</h1><button id="topmost" class="active">置顶已开启</button></header><pre>${escapeHtml(text)}</pre><script>
     let enabled = true;
     const button = document.getElementById("topmost");
     button.addEventListener("click", async () => {
       enabled = !enabled;
       const result = await window.bamt?.setTimelinePreviewAlwaysOnTop?.(enabled);
       button.classList.toggle("active", enabled);
-      button.textContent = enabled ? "缃《宸插紑鍚? : "缃《宸插叧闂?;
-      if (!result) button.textContent = "缃《鎺у埗涓嶅彲鐢?;
+      button.textContent = enabled ? "置顶已开启" : "置顶已关闭";
+      if (!result) button.textContent = "置顶控制不可用";
     });
   </script></body></html>`;
 }

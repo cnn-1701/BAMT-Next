@@ -223,11 +223,18 @@ fn default_actions() -> String {
 
 fn load_config() -> String { fs::read_to_string(config_path()).unwrap_or_else(|_| default_config()) }
 
+fn load_config_and_sync_resolution() -> String {
+    let config = load_config();
+    if let Ok(mut resolution) = runtime().resolution.lock() { *resolution = resolution_from_config(&config); }
+    config
+}
+
 fn save_config(payload: &str) -> Result<String, String> {
     let path = config_path();
     if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
     let text = if payload.trim().is_empty() || payload.trim() == "null" { default_config() } else { payload.trim().to_string() };
     fs::write(path, &text).map_err(|e| e.to_string())?;
+    if let Ok(mut resolution) = runtime().resolution.lock() { *resolution = resolution_from_config(&text); }
     Ok(text)
 }
 
@@ -386,6 +393,19 @@ fn logical_to_screen(x: i32, y: i32) -> Point {
     let lx = x.clamp(0, lw);
     let ly = y.clamp(0, lh);
     Point { x: left + ((lx as f64) * ((sw - 1) as f64) / (lw as f64)).round() as i32, y: top + ((ly as f64) * ((sh - 1) as f64) / (lh as f64)).round() as i32 }
+}
+
+fn screen_to_logical(point: Point) -> Point {
+    let res = current_resolution();
+    let (left, top, sw, sh) = virtual_screen_bounds();
+    let lw = (res.width - 1).max(1);
+    let lh = (res.height - 1).max(1);
+    let sx = (point.x - left).clamp(0, (sw - 1).max(0));
+    let sy = (point.y - top).clamp(0, (sh - 1).max(0));
+    Point {
+        x: (((sx as f64) * (lw as f64) / ((sw - 1).max(1) as f64)).round() as i32).clamp(0, lw),
+        y: (((sy as f64) * (lh as f64) / ((sh - 1).max(1) as f64)).round() as i32).clamp(0, lh),
+    }
 }
 
 fn move_screen(point: Point) {
@@ -674,7 +694,7 @@ fn stop_listening() -> String {
 fn capture_position(payload: &str) -> String {
     let delay_ms = number_value(payload, "delayMs", 2000.0).max(0.0) as u64;
     thread::sleep(Duration::from_millis(delay_ms));
-    let point = cursor_pos();
+    let point = screen_to_logical(cursor_pos());
     let result = format!("{{\"x\":{},\"y\":{}}}", point.x, point.y);
     emit("capture", &result);
     result
@@ -695,7 +715,7 @@ fn test_action(action_raw: &str) {
 
 fn handle(command: &str, payload: &str) -> Result<String, String> {
     match command {
-        "get_initial_config" | "load_config" => Ok(load_config()),
+        "get_initial_config" | "load_config" => Ok(load_config_and_sync_resolution()),
         "save_config" => save_config(payload),
         "start_listening" => {
             let resolution = resolution_from_config(payload);

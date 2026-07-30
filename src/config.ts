@@ -124,7 +124,7 @@ export function transformPoint(
 
   return clampPoint(
     {
-      x: to.width / 2 + (point.x - from.width / 2) * (to.width / from.width),
+      x: to.width / 2 + (point.x - from.width / 2) * (to.height / from.height),
       y: to.height / 2 + (point.y - from.height / 2) * (to.height / from.height)
     },
     to
@@ -140,7 +140,7 @@ export function transformUiPoint(point: { x: number; y: number }, from: Resoluti
 }
 
 export function transformAction(action: MacroAction, from: Resolution, to: Resolution, mode: CoordinateTransformMode) {
-  const point = action.type === "drag"
+  const point = action.type === "drag" || action.type === "fastPlay"
     ? transformUiPoint({ x: action.targetX, y: action.targetY }, from, to)
     : transformPoint({ x: action.targetX, y: action.targetY }, from, to, mode);
   return {
@@ -148,7 +148,7 @@ export function transformAction(action: MacroAction, from: Resolution, to: Resol
     id: uid(action.id || "imported"),
     targetX: point.x,
     targetY: point.y,
-    dragDistance: action.type === "drag"
+    dragDistance: action.type === "drag" || action.type === "fastPlay"
       ? Math.max(1, Math.round(action.dragDistance * (to.width / from.width)))
       : Math.max(1, Math.round(action.dragDistance * (to.height / from.height)))
   };
@@ -281,7 +281,7 @@ export function createAction(seed = Date.now()): MacroAction {
     targetY: 800,
     dragDistance: 300,
     dragDuration: 0.02,
-    clickGap: 0.03,
+    clickGap: 0.01,
     cardClickGap: 0.005,
     loopGap: 0.05,
     enabled: true,
@@ -303,7 +303,7 @@ export function createSkillDragActions(resolution: Resolution, tuning?: MacroTun
     dragDistance: 300,
     dragDuration: 0.02,
     clickGap: 0.1,
-    cardClickGap: 0.010,
+    cardClickGap: 0.002,
     loopGap: 0.001,
     enabled: true,
     script: DEFAULT_SCRIPT_MACRO
