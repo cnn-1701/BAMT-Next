@@ -63,6 +63,20 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "rust-fastplay-demo/target/release",
+        "to": "rust-fastplay",
+        "filter": [
+          "bamt-rust-fastplay-demo.exe"
+        ]
+      },
+      {
+        "from": "rust-backend/target/release",
+        "to": "rust-backend",
+        "filter": [
+          "bamt-rust-backend.exe"
+        ]
       }
     ],
     "win": {
@@ -81,3 +95,4 @@
     }
   }
 }
+

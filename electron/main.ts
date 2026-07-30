@@ -25,6 +25,7 @@ const presetLibraryPath = path.join(presetDir, "preset-library.json");
 let mainWindow: BrowserWindow | null = null;
 let backend: MacroBackend | null = null;
 let ahkProcess: ChildProcessWithoutNullStreams | null = null;
+let rustFastPlayProcess: ChildProcessWithoutNullStreams | null = null;
 let timelinePreviewWindow: BrowserWindow | null = null;
 
 function pythonCandidates(): string[] {
@@ -53,6 +54,32 @@ function ahkCandidates(): string[] {
   return [...new Set(candidates)];
 }
 
+
+function rustFastPlayCandidates(): string[] {
+  const exeName = "bamt-rust-fastplay-demo.exe";
+  const candidates = [
+    process.env.BAMT_RUST_FASTPLAY,
+    path.join(appDir, "rust-fastplay-demo", "target", "release", exeName),
+    path.join(projectDir, "rust-fastplay-demo", "target", "release", exeName),
+    path.join(appDir, "tools", "rust-fastplay", exeName),
+    path.join(projectDir, "tools", "rust-fastplay", exeName),
+    path.join(resourcesDir, "rust-fastplay", exeName)
+  ].filter(Boolean) as string[];
+  return [...new Set(candidates)];
+}
+
+function rustBackendCandidates(): string[] {
+  const exeName = "bamt-rust-backend.exe";
+  const candidates = [
+    process.env.BAMT_RUST_BACKEND,
+    path.join(appDir, "rust-backend", "target", "release", exeName),
+    path.join(projectDir, "rust-backend", "target", "release", exeName),
+    path.join(appDir, "tools", "rust-backend", exeName),
+    path.join(projectDir, "tools", "rust-backend", exeName),
+    path.join(resourcesDir, "rust-backend", exeName)
+  ].filter(Boolean) as string[];
+  return [...new Set(candidates)];
+}
 function ensureDataDirs(): void {
   for (const dir of [dataDir, configDir, presetDir, presetImportDir, presetExportDir, ahkDataDir, timelineDir]) fs.mkdirSync(dir, { recursive: true });
 }
@@ -153,9 +180,16 @@ class MacroBackend {
   constructor(private readonly onEvent: (event: BackendEvent) => void) {}
   async ensureStarted(): Promise<void> {
     if (this.child && !this.child.killed) return;
+    const errors: string[] = [];
+    if ((process.env.BAMT_BACKEND || "").toLowerCase() === "rust") {
+      for (const command of rustBackendCandidates()) {
+        try { await this.spawnRustWith(command); return; }
+        catch (error) { errors.push(`${command}: ${String(error)}`); }
+      }
+      throw new Error(`Cannot start Rust backend. Set BAMT_RUST_BACKEND to bamt-rust-backend.exe. Tried:\n${errors.join("\n")}`);
+    }
     const backendPath = path.join(backendDir, "macro_service.py");
     if (!fs.existsSync(backendPath)) throw new Error(`Cannot find backend service: ${backendPath}`);
-    const errors: string[] = [];
     for (const command of pythonCandidates()) {
       try { await this.spawnWith(command, backendPath); return; }
       catch (error) { errors.push(`${command}: ${String(error)}`); }
@@ -180,6 +214,22 @@ class MacroBackend {
     this.child.kill();
     this.child = null;
   }
+  private async spawnRustWith(command: string): Promise<void> {
+    if (path.isAbsolute(command) && !fs.existsSync(command)) throw new Error("Rust backend executable not found");
+    ensureDataDirs();
+    const child = spawn(command, [], { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, BAMT_CONFIG_PATH: configPath } });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { cleanup(); this.child = child; this.attachReaders(child); resolve(); }, 700);
+      const fail = (error: Error) => { cleanup(); reject(error); };
+      const exitEarly = (code: number | null) => { cleanup(); reject(new Error(`${command} exited before ready. code=${code ?? "null"} ${stderr}`)); };
+      const cleanup = () => { clearTimeout(timer); child.off("error", fail); child.off("exit", exitEarly); };
+      child.once("error", fail);
+      child.once("exit", exitEarly);
+    });
+  }
+
   private async spawnWith(command: string, backendPath: string): Promise<void> {
     const args = command === "py" ? ["-3", backendPath] : [backendPath];
     ensureDataDirs();
@@ -351,10 +401,42 @@ function registerIpc(): void {
     ahkProcess = null;
     return { status: "stopped", message: "AHK 脚本已停止" };
   });
+  ipcMain.handle("macro:run-rust-fastplay-demo", async () => {
+    if (rustFastPlayProcess && !rustFastPlayProcess.killed) {
+      return { status: "ready", message: "Rust FastPlay Demo is already running. Q/W/E loop 1/2/3 + current mouse click; F12 exits." };
+    }
+    const errors: string[] = [];
+    for (const command of rustFastPlayCandidates()) {
+      try {
+        if (!fs.existsSync(command)) {
+          errors.push(command + ": not found");
+          continue;
+        }
+        const child = spawn(command, [], { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+        rustFastPlayProcess = child;
+        child.stdout.on("data", (chunk) => emit({ type: "log", payload: { level: "info", message: "[Rust Demo] " + chunk.toString("utf8").trim() } }));
+        child.stderr.on("data", (chunk) => emit({ type: "log", payload: { level: "error", message: "[Rust Demo] " + chunk.toString("utf8").trim() } }));
+        child.once("exit", (code) => {
+          if (rustFastPlayProcess === child) rustFastPlayProcess = null;
+          emit({ type: "log", payload: { level: "info", message: `[Rust Demo] exited code=${code ?? "null"}` } });
+        });
+        return { status: "ready", message: "Rust FastPlay Demo started. Q/W/E loop 1/2/3 + current mouse click; F12 exits." };
+      } catch (error) {
+        errors.push(command + ": " + String(error instanceof Error ? error.message : error));
+      }
+    }
+    return { status: "error", message: "Cannot find Rust FastPlay Demo exe. Build rust-fastplay-demo or set BAMT_RUST_FASTPLAY.\n" + errors.join("\n") };
+  });
+  ipcMain.handle("macro:stop-rust-fastplay-demo", async () => {
+    if (!rustFastPlayProcess || rustFastPlayProcess.killed) return { status: "stopped", message: "Rust FastPlay Demo is not running" };
+    rustFastPlayProcess.kill();
+    rustFastPlayProcess = null;
+    return { status: "stopped", message: "Rust FastPlay Demo stopped" };
+  });
 }
 app.whenReady().then(async () => { registerIpc(); await createWindow(); });
 app.on("window-all-closed", () => { backend?.stop(); if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => { backend?.stop(); ahkProcess?.kill(); timelinePreviewWindow?.close(); });
+app.on("before-quit", () => { backend?.stop(); ahkProcess?.kill(); rustFastPlayProcess?.kill(); timelinePreviewWindow?.close(); });
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 
 

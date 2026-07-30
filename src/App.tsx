@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Archive, BookOpen, Code2, CalendarDays, ChevronRight, Crosshair, FileDown, FileUp, Hand, Home, Keyboard, LetterText, ListChecks, Menu, MousePointerClick, PanelLeftClose, PanelLeftOpen, Play, Plus, Save, Settings, Shuffle, Square, Trash2, Zap } from "lucide-react";
+import { Archive, BookOpen, Code2, Cpu, CalendarDays, ChevronRight, Crosshair, FileDown, FileUp, Hand, Home, Keyboard, LetterText, ListChecks, Menu, MousePointerClick, PanelLeftClose, PanelLeftOpen, Play, Plus, Save, Settings, Shuffle, Square, Trash2, Zap } from "lucide-react";
 import {
   calculateSkillSlots,
   createAction,
@@ -23,6 +23,7 @@ import { getMacroApi } from "./api";
 import { hotkeyLabel, keyEventToHotkey, mouseEventToHotkey } from "./hotkeys";
 import { ProjectManual } from "./ProjectManual";
 import { AhkConsole } from "./AhkConsole";
+import { RustFastPlayDemo } from "./RustFastPlayDemo";
 import { TimelinePlanner } from "./TimelinePlanner";
 import type { BackendEvent, BackendStatus, MacroAction, MacroConfig, MacroType } from "./types";
 import blueArchiveLogo from "./assets/blue-archive-logo-jp.svg";
@@ -413,6 +414,7 @@ export function App() {
           <button className={activeSection === "home" ? "nav-active" : ""} onClick={() => jumpTo("home")}><Home size={18} />宏控制台</button>
           <button className={activeSection === "converter" ? "nav-active" : ""} onClick={() => jumpTo("converter")}><Crosshair size={18} />点位转换器</button>
           <button className={activeSection === "timeline" ? "nav-active" : ""} onClick={() => jumpTo("timeline")}><CalendarDays size={18} />排轴编辑器</button>
+          <button className={activeSection === "rust-demo" ? "nav-active" : ""} onClick={() => jumpTo("rust-demo")}><Cpu size={18} />Rust 出牌 Demo</button>
           <button className={activeSection === "ahk" ? "nav-active" : ""} onClick={() => jumpTo("ahk")}><Code2 size={18} />AHK 解释器</button>
           <button onClick={() => setManualOpen(true)}><BookOpen size={18} />使用说明书</button>
         </nav>
@@ -533,6 +535,7 @@ export function App() {
 
 
         {activeSection === "timeline" && <TimelinePlanner api={api} pushLog={pushLog} />}
+        {activeSection === "rust-demo" && <RustFastPlayDemo api={api} pushLog={pushLog} />}
         {activeSection === "ahk" && <AhkConsole api={api} pushLog={pushLog} />}
       </section>
 

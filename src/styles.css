@@ -252,6 +252,22 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
 .ahk-status { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(232,246,255,.72); color: #557087; }
 .ahk-status.running { color: #0b7a42; background: rgba(229, 250, 239, .85); }
 
+.rust-demo-panel { max-width: 960px; margin: 20px auto 0; }
+.rust-demo-panel .section-title h2 { display: flex; align-items: center; gap: 8px; }
+.rust-demo-panel .demo-note {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid rgba(128, 186, 226, .42);
+  border-radius: 8px;
+  background: rgba(236, 248, 255, .72);
+  color: #53718c;
+  font-size: 16px;
+  line-height: 1.65;
+}
+.rust-demo-panel .demo-note p { margin: 0; }
+
 .timeline-planner { max-width: 1480px; margin: 20px auto 0; display: grid; grid-template-columns: minmax(0,1.35fr) minmax(360px,.85fr); gap: 20px; align-items: start; }
 .timeline-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .timeline-meta .span-2 { grid-column: 1 / -1; }

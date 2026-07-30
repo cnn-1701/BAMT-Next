@@ -1,4 +1,4 @@
-﻿# BAMT Next ignore rules
+# BAMT Next ignore rules
 node_modules/
 dist/
 dist-electron/
@@ -48,4 +48,8 @@ legacy/tkinter-package/**/*.pak
 legacy/tkinter-package/**/*.bin
 legacy/tkinter-package/**/*.dat
 legacy/tkinter-package/**/*.asar
+
+
+# Rust build output.
+rust-*/target/
 

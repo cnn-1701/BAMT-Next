@@ -22,6 +22,8 @@ const api: MacroApi = {
   setTimelinePreviewAlwaysOnTop: (enabled: boolean) => ipcRenderer.invoke("macro:set-timeline-preview-always-on-top", enabled),
   runAhkScript: (script: string) => ipcRenderer.invoke("macro:run-ahk-script", script),
   stopAhkScript: () => ipcRenderer.invoke("macro:stop-ahk-script"),
+  runRustFastPlayDemo: () => ipcRenderer.invoke("macro:run-rust-fastplay-demo"),
+  stopRustFastPlayDemo: () => ipcRenderer.invoke("macro:stop-rust-fastplay-demo"),
   onEvent: (listener: (event: BackendEvent) => void) => {
     const handler = (_: Electron.IpcRendererEvent, event: BackendEvent) => listener(event);
     ipcRenderer.on("macro:event", handler);
