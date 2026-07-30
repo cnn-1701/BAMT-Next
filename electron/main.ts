@@ -223,6 +223,7 @@ class MacroBackend {
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({ width: 1360, height: 860, minWidth: 1060, minHeight: 720, title: "BAMT Next", backgroundColor: "#edf5fb", webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false } });
+  mainWindow.once("closed", () => { mainWindow = null; });
   mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
     console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
   });
@@ -235,7 +236,11 @@ async function createWindow(): Promise<void> {
   if (isDev) await mainWindow.loadURL("http://127.0.0.1:5173");
   else await mainWindow.loadFile(path.join(appDir, "dist", "index.html"));
 }
-function emit(event: BackendEvent): void { mainWindow?.webContents.send("macro:event", event); }
+function emit(event: BackendEvent): void {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  window.webContents.send("macro:event", event);
+}
 function registerIpc(): void {
   ensureDataDirs();
   backend = new MacroBackend(emit);
