@@ -474,11 +474,10 @@ fn execute_drag_once(action: &Action, cancel: &AtomicBool) {
     move_logical(action.target_x, up_y);
     sleep_cancelable(clamp_seconds(action.drag_duration, 0.02, 0.001, 0.3), cancel);
 
-    let release = runtime().intended_cursor.lock().map(|p| *p).unwrap_or(start_release);
-    move_screen(release);
+    move_screen(start_release);
     thread::sleep(Duration::from_millis(8));
     send_mouse_left(false);
-    move_screen(release);
+    move_screen(start_release);
     runtime().drag_active.store(false, Ordering::SeqCst);
 }
 
@@ -630,7 +629,7 @@ unsafe extern "system" fn mouse_proc(code: i32, w_param: Wparam, l_param: Lparam
     if code >= 0 && w_param == WM_MOUSEMOVE && runtime().drag_active.load(Ordering::Relaxed) {
         let data = *(l_param as *const MouseLlHookStruct);
         if data.flags & 0x00000001 == 0 {
-            if let Ok(mut intended) = runtime().intended_cursor.lock() { *intended = data.pt; }
+            return 1;
         }
     }
     CallNextHookEx(0, code, w_param, l_param)
