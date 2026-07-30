@@ -1955,3 +1955,62 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
 }
 
 
+/* Macro type picker: stable 3x2 matrix. */
+#section-settings .type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: stretch;
+}
+
+#section-settings .type-grid .type-card,
+#section-settings .type-grid .type-card:nth-child(5) {
+  width: 100%;
+  min-width: 0;
+  min-height: 92px;
+  margin: 0;
+  grid-column: auto;
+  flex: initial;
+  flex-basis: auto;
+  justify-self: stretch;
+  padding: 12px 10px;
+  border-radius: 8px;
+}
+
+#section-settings .type-grid .type-card svg {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  #section-settings .type-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #section-settings .type-grid .type-card,
+  #section-settings .type-grid .type-card:nth-child(5) {
+    width: 100%;
+    flex-basis: auto;
+  }
+}
+
+#section-settings .script-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: -4px 0 14px;
+}
+
+#section-settings .script-action-row .capture {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 8px;
+}
+
+#section-settings .script-action-row .capture.active {
+  color: #0877b9;
+  border-color: #23a7ec;
+  background: #e5f6ff;
+}

@@ -281,7 +281,7 @@ export function createAction(seed = Date.now()): MacroAction {
     targetY: 800,
     dragDistance: 300,
     dragDuration: 0.02,
-    clickGap: 0.1,
+    clickGap: 0.03,
     cardClickGap: 0.005,
     loopGap: 0.05,
     enabled: true,

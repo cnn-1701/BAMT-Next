@@ -28,6 +28,30 @@ import type { BackendEvent, BackendStatus, MacroAction, MacroConfig, MacroType }
 import blueArchiveLogo from "./assets/blue-archive-logo-jp.svg";
 
 const typeIcons: Record<MacroType, typeof Crosshair> = { point: Crosshair, drag: Hand, autoClick: Zap, click: MousePointerClick, fastPlay: Play, script: Code2 };
+const knownMacroTypes = new Set(Object.keys(MACRO_LABELS));
+
+function isKnownMacroType(type: unknown): type is MacroType {
+  return typeof type === "string" && knownMacroTypes.has(type);
+}
+
+function macroIconFor(type: unknown) {
+  return isKnownMacroType(type) ? typeIcons[type] : Crosshair;
+}
+
+function macroLabelFor(type: unknown) {
+  return isKnownMacroType(type) ? MACRO_LABELS[type] : `未知宏(${String(type || "空")})`;
+}
+
+function normalizeUiConfig(raw: Partial<MacroConfig>): MacroConfig {
+  const merged = { ...DEFAULT_CONFIG, ...raw } as MacroConfig;
+  const rawActions = Array.isArray(raw.actions) ? raw.actions : DEFAULT_CONFIG.actions;
+  const actions = rawActions.map((action, index) => {
+    const fallback = createAction(Date.now() + index);
+    const mergedAction = { ...fallback, ...action } as MacroAction;
+    return isKnownMacroType(mergedAction.type) ? mergedAction : { ...mergedAction, type: "point" as MacroType, name: `${mergedAction.name || "未知宏"}（已转为点位）` };
+  });
+  return { ...merged, actions };
+}
 const backgroundModules = import.meta.glob("./assets/backgrounds/*.{png,jpg,jpeg,webp,avif}", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
 
 function pickBackgroundIndex(length: number) {
@@ -91,9 +115,9 @@ export function App() {
 
   useEffect(() => {
     void api.getInitialConfig().then((loaded) => {
-      setConfig({ ...DEFAULT_CONFIG, ...loaded });
-      setSelectedId(loaded.actions[0]?.id ?? "");
-      setStatus("ready");
+      const normalized = normalizeUiConfig(loaded);
+      setConfig(normalized);
+      setSelectedId(normalized.actions[0]?.id ?? "");
       setStatusText("就绪");
     }).catch((error) => {
       setStatus("unavailable");
@@ -229,6 +253,37 @@ export function App() {
     setSelectedId(next.id);
   }
 
+  function addScriptAction(script = "") {
+    stopBeforeEditing("新增脚本宏");
+    const next = createAction(Date.now());
+    const used = new Set(config.actions.map((action) => action.hotkey));
+    next.hotkey = "qwertasdfgzxcvbf123456".split("").find((key) => !used.has(key)) ?? "f6";
+    next.name = `脚本宏 ${config.actions.filter((action) => action.type === "script").length + 1}`;
+    next.type = "script";
+    next.script = script || next.script;
+    setConfig((current) => ({ ...current, actions: [...current.actions, next] }));
+    setSelectedId(next.id);
+  }
+
+  async function importAhkAsScriptAction() {
+    stopBeforeEditing("导入 AHK 脚本宏");
+    const file = await api.pickPresetPackage();
+    if (!file) {
+      pushLog("已取消导入 AHK 脚本宏");
+      return;
+    }
+    const next = createAction(Date.now());
+    const used = new Set(config.actions.map((action) => action.hotkey));
+    next.hotkey = "qwertasdfgzxcvbf123456".split("").find((key) => !used.has(key)) ?? "f6";
+    next.name = file.name.replace(/\.ahk$/i, "") || `脚本宏 ${config.actions.filter((action) => action.type === "script").length + 1}`;
+    next.type = "script";
+    next.script = file.text;
+    setConfig((current) => ({ ...current, actions: [...current.actions, next] }));
+    setSelectedId(next.id);
+    pushLog(`已导入 AHK 为脚本宏：${file.path}`);
+  }
+
+
   function removeSelected() {
     if (!selected) return;
     stopBeforeEditing("删除指令");
@@ -248,9 +303,9 @@ export function App() {
   async function loadConfig() {
     stopBeforeEditing("载入配置");
     const loaded = await api.loadConfig();
-    setConfig({ ...DEFAULT_CONFIG, ...loaded });
-    setSelectedId(loaded.actions[0]?.id ?? "");
-    pushLog("配置已载入");
+    const normalized = normalizeUiConfig(loaded);
+    setConfig(normalized);
+    setSelectedId(normalized.actions[0]?.id ?? "");
   }
 
   async function start() {
@@ -444,9 +499,11 @@ export function App() {
                 <label>热键<div className="capture-field"><input value={hotkeyLabel(selected.hotkey)} readOnly /><button className={recordingField === "action" ? "capture recording" : "capture"} onClick={() => setRecordingField(recordingField === "action" ? null : "action")}><Keyboard size={17} />{recordingField === "action" ? "按下热键" : "录入"}</button></div></label>
                 <label className="toggle-line"><input type="checkbox" checked={selected.enabled} onChange={(event) => patchSelected({ enabled: event.target.checked })} />启用</label>
               </div>
-              <div className="type-grid">{(Object.keys(MACRO_LABELS) as MacroType[]).map((type) => { const Icon = typeIcons[type]; return <button key={type} className={selected.type === type ? "type-card active" : "type-card"} onClick={() => patchSelected({ type })} title={MACRO_DESCRIPTIONS[type]}><Icon size={20} />{MACRO_LABELS[type]}</button>; })}</div>
+              <div className="type-grid">{(Object.keys(MACRO_LABELS).filter((type) => type !== "script") as MacroType[]).map((type) => { const Icon = typeIcons[type]; return <button key={type} className={selected.type === type ? "type-card active" : "type-card"} onClick={() => patchSelected({ type })} title={MACRO_DESCRIPTIONS[type]}><Icon size={20} />{MACRO_LABELS[type]}</button>; })}</div>
+              <div className="script-action-row"><button className={selected.type === "script" ? "capture active" : "capture"} onClick={() => addScriptAction()}><Plus size={17} />{"新增脚本宏"}</button><button className="capture" onClick={importAhkAsScriptAction}><FileDown size={17} />{"导入 AHK 脚本宏"}</button></div>
               <div className="field-row"><label>X<input type="number" value={selected.targetX} onChange={(event) => patchSelected({ targetX: Number(event.target.value) })} /></label><label>Y<input type="number" value={selected.targetY} onChange={(event) => patchSelected({ targetY: Number(event.target.value) })} /></label><button className="capture" onClick={capture}><Crosshair size={17} />捕获</button></div>
               {selected.type === "drag" && <div className="field-row"><label>距离<input type="number" value={selected.dragDistance} onChange={(event) => patchSelected({ dragDistance: Number(event.target.value) })} /></label><label>时长<input type="number" step="0.001" value={selected.dragDuration} onChange={(event) => patchSelected({ dragDuration: Number(event.target.value) })} /></label></div>}
+              {selected.type === "point" && <label>{"\u6309\u4f4f\u65f6\u957f"}<input type="number" step="0.001" min="0.005" max="0.2" value={selected.clickGap ?? 0.03} onChange={(event) => patchSelected({ clickGap: Number(event.target.value) })} /></label>}
               {selected.type === "fastPlay" && <label>选牌键<input value={selected.cardKey || ""} placeholder="1 / 2 / 3" onChange={(event) => patchSelected({ cardKey: event.target.value.trim() })} /></label>}
               {selected.type === "script" && <label className="script-editor-label">脚本内容<textarea className="macro-script-editor" value={selected.script || ""} onChange={(event) => patchSelected({ script: event.target.value })} spellCheck={false} /></label>}
               {selected.type === "drag" && <label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.05} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label>}
@@ -459,7 +516,7 @@ export function App() {
 
           <section className="glass-card list-card">
             <div className="section-title"><h2>指令列表</h2><span>{config.actions.length} 条</span></div>
-            <div className="macro-list">{config.actions.map((action) => { const Icon = typeIcons[action.type]; return <button key={action.id} className={action.id === selectedId ? "macro-row selected" : "macro-row"} onClick={() => setSelectedId(action.id)}><span className="macro-icon"><Icon size={20} /></span><span><strong>{action.name}</strong><small>{MACRO_LABELS[action.type]} · {action.enabled ? "启用" : "停用"}</small></span><kbd>{hotkeyLabel(action.hotkey)}</kbd><span className="macro-meta">{action.type === "autoClick" ? `${action.targetX}, ${action.targetY} / ${action.clickGap}s` : `${action.targetX}, ${action.targetY}`}</span><ChevronRight size={16} /></button>; })}</div>
+            <div className="macro-list">{config.actions.map((action) => { const Icon = macroIconFor(action.type); return <button key={action.id} className={action.id === selectedId ? "macro-row selected" : "macro-row"} onClick={() => setSelectedId(action.id)}><span className="macro-icon"><Icon size={20} /></span><span><strong>{action.name}</strong><small>{macroLabelFor(action.type)} · {action.enabled ? "启用" : "停用"}</small></span><kbd>{hotkeyLabel(action.hotkey)}</kbd><span className="macro-meta">{action.type === "autoClick" ? `${action.targetX}, ${action.targetY} / ${action.clickGap}s` : `${action.targetX}, ${action.targetY}`}</span><ChevronRight size={16} /></button>; })}</div>
             <div id="section-presets" className="preset-library">
               <h3>全局宏预设库</h3>
               {presetLibrary.length === 0 ? <p>还没有保存的预设</p> : presetLibrary.map((preset) => (

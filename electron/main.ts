@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, ipcMain, shell, dialog, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, ipcMain, shell, dialog, type OpenDialogOptions } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -221,6 +221,15 @@ class MacroBackend {
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({ width: 1360, height: 860, minWidth: 1060, minHeight: 720, title: "BAMT Next", backgroundColor: "#edf5fb", webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false } });
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("Renderer process gone:", details.reason, details.exitCode);
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
+    console.error(`Renderer failed to load ${url}: ${code} ${description}`);
+  });
   if (isDev) await mainWindow.loadURL("http://127.0.0.1:5173");
   else await mainWindow.loadFile(path.join(appDir, "dist", "index.html"));
 }
