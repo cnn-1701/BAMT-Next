@@ -42,13 +42,39 @@ function macroLabelFor(type: unknown) {
   return isKnownMacroType(type) ? MACRO_LABELS[type] : `未知宏(${String(type || "空")})`;
 }
 
+function baseSkillSlotIndex(action: MacroAction) {
+  const match = /^skill-(?:drag|fast-play)-([1-3])$/.exec(action.id);
+  return match ? Number(match[1]) - 1 : -1;
+}
+
 function normalizeUiConfig(raw: Partial<MacroConfig>): MacroConfig {
   const merged = { ...DEFAULT_CONFIG, ...raw } as MacroConfig;
   const rawActions = Array.isArray(raw.actions) ? raw.actions : DEFAULT_CONFIG.actions;
+  const baseSkillSlots = createSkillDragActions(merged.resolution, merged);
   const actions = rawActions.map((action, index) => {
     const fallback = createAction(Date.now() + index);
     const mergedAction = { ...fallback, ...action } as MacroAction;
-    return isKnownMacroType(mergedAction.type) ? mergedAction : { ...mergedAction, type: "point" as MacroType, name: `${mergedAction.name || "未知宏"}（已转为点位）` };
+    const normalizedAction = isKnownMacroType(mergedAction.type) ? mergedAction : { ...mergedAction, type: "point" as MacroType, name: `${mergedAction.name || "未知宏"}（已转为点位）` };
+    const slotIndex = baseSkillSlotIndex(normalizedAction);
+    if (slotIndex >= 0) {
+      const slot = baseSkillSlots[slotIndex];
+      return {
+        ...normalizedAction,
+        name: slot.name,
+        type: slot.type,
+        cardKey: slot.cardKey,
+        targetX: slot.targetX,
+        targetY: slot.targetY,
+        dragDistance: slot.dragDistance,
+        dragDuration: slot.dragDuration,
+        clickGap: slot.clickGap,
+        cardClickGap: slot.cardClickGap,
+        loopGap: slot.loopGap,
+        hotkey: normalizedAction.hotkey || slot.hotkey,
+        enabled: normalizedAction.enabled
+      };
+    }
+    return normalizedAction;
   });
   return { ...merged, actions };
 }

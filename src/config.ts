@@ -182,7 +182,9 @@ export function transformActionsToResolution(actions: MacroAction[], from: Resol
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
         dragDuration: normalizeDragDuration(action) || slot.dragDuration,
-        loopGap: normalizeLoopGap({ ...action, loopGap: action.loopGap || slot.loopGap }),
+        clickGap: slot.clickGap,
+        cardClickGap: slot.cardClickGap,
+        loopGap: slot.loopGap,
         hotkey: action.hotkey || slot.hotkey,
         enabled: action.enabled,
         script: action.script
@@ -208,7 +210,9 @@ export function transformPresetToResolution(preset: MacroPreset, resolution: Res
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
         dragDuration: normalizeDragDuration(action) || slot.dragDuration,
-        loopGap: normalizeLoopGap({ ...action, loopGap: action.loopGap || slot.loopGap }),
+        clickGap: slot.clickGap,
+        cardClickGap: slot.cardClickGap,
+        loopGap: slot.loopGap,
         hotkey: action.hotkey || slot.hotkey,
         enabled: action.enabled,
         script: action.script
