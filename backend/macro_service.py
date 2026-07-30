@@ -26,6 +26,8 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_ABSOLUTE = 0x8000
 KEYEVENTF_KEYUP = 0x0002
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
@@ -113,8 +115,18 @@ class MOUSEINPUT(Structure):
     ]
 
 
+class KEYBDINPUT(Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", POINTER(c_ulong)),
+    ]
+
+
 class INPUT_UNION(Union):
-    _fields_ = [("mi", MOUSEINPUT)]
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
 
 
 class INPUT(Structure):
@@ -208,6 +220,8 @@ class InputDriver:
         self.user32.keybd_event.argtypes = [ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_uint32, ctypes.c_ulong]
         self.user32.MapVirtualKeyW.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
         self.user32.MapVirtualKeyW.restype = ctypes.c_uint32
+        self.user32.SendInput.argtypes = [ctypes.c_uint, POINTER(INPUT), ctypes.c_int]
+        self.user32.SendInput.restype = ctypes.c_uint
 
     def update_resolution(self, resolution: Resolution) -> None:
         self.resolution = resolution
@@ -336,8 +350,24 @@ class InputDriver:
             raise ValueError(f"Unsupported card key: {key_name}")
         scan = int(self.user32.MapVirtualKeyW(int(vk), 0))
         self.user32.keybd_event(int(vk), scan, 0, 0)
-        time.sleep(delay)
+        if delay > 0:
+            time.sleep(delay)
         self.user32.keybd_event(int(vk), scan, KEYEVENTF_KEYUP, 0)
+
+    def tap_key_input(self, vk: int, delay: float = 0.004) -> None:
+        scan = int(self.user32.MapVirtualKeyW(int(vk), 0))
+        extra = c_ulong(0)
+        down = INPUT(type=INPUT_KEYBOARD, ii=INPUT_UNION(ki=KEYBDINPUT(int(vk), scan, 0, 0, ctypes.pointer(extra))))
+        up = INPUT(type=INPUT_KEYBOARD, ii=INPUT_UNION(ki=KEYBDINPUT(int(vk), scan, KEYEVENTF_KEYUP, 0, ctypes.pointer(extra))))
+        if self.user32.SendInput(1, byref(down), sizeof(INPUT)) != 1:
+            raise ctypes.WinError()
+        if delay > 0:
+            time.sleep(delay)
+        if self.user32.SendInput(1, byref(up), sizeof(INPUT)) != 1:
+            raise ctypes.WinError()
+
+    def click_current_fast(self, delay: float = 0.006) -> None:
+        self.click_current(delay)
 
 
     def release_all(self) -> None:
@@ -791,7 +821,8 @@ class MacroService:
     def run_once(self, action: dict[str, Any], cancel: Callable[[], bool]) -> None:
         if action["type"] == "point":
             self.start_point(action)
-            sleep_cancelable(0.15, self.stop_event)
+            hold = max(0.005, min(0.2, float(action.get("clickGap", 0.03))))
+            sleep_cancelable(hold, self.stop_event)
             self.release_point(action)
         elif action["type"] == "click":
             self.click_action(action)
@@ -813,7 +844,7 @@ class MacroService:
         emit("execution", {"actionId": action["id"], "actionName": action["name"], "phase": "start"})
         try:
             self.driver.move_to(action["targetX"], action["targetY"])
-            time.sleep(0.02)
+            time.sleep(0.005)
             self.driver.left_down()
             self.active_points[action["id"]] = original
         except Exception:
@@ -826,9 +857,9 @@ class MacroService:
         if original is None:
             return
         self.driver.move_to(action["targetX"], action["targetY"])
-        time.sleep(0.01)
+        time.sleep(0.003)
         self.driver.left_up()
-        time.sleep(0.02)
+        time.sleep(0.003)
         self.driver.move_to(*original)
         emit("execution", {"actionId": action["id"], "actionName": action["name"], "phase": "end"})
 
