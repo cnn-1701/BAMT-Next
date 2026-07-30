@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Archive, BookOpen, Code2, CalendarDays, ChevronRight, Crosshair, FileDown, FileUp, Hand, Home, Keyboard, LetterText, ListChecks, Menu, MousePointerClick, PanelLeftClose, PanelLeftOpen, Play, Plus, Save, Settings, Shuffle, Square, Trash2, Zap } from "lucide-react";
 import {
   calculateSkillSlots,
@@ -73,6 +73,7 @@ export function App() {
   const appStyle = { "--app-bg-image": activeBackground ? `url("${activeBackground}")` : "none" } as CSSProperties;
 
   const [config, setConfig] = useState<MacroConfig>(DEFAULT_CONFIG);
+  const configRef = useRef<MacroConfig>(DEFAULT_CONFIG);
   const [selectedId, setSelectedId] = useState(DEFAULT_CONFIG.actions[0]?.id ?? "");
   const [status, setStatus] = useState<BackendStatus>("booting");
   const [statusText, setStatusText] = useState("正在连接后端");
@@ -116,6 +117,7 @@ export function App() {
   useEffect(() => {
     void api.getInitialConfig().then((loaded) => {
       const normalized = normalizeUiConfig(loaded);
+      configRef.current = normalized;
       setConfig(normalized);
       setSelectedId(normalized.actions[0]?.id ?? "");
       setStatusText("就绪");
@@ -185,6 +187,16 @@ export function App() {
     pushLog(`${reason}：已自动暂停宏监听`);
   }
 
+  function setConfigLive(next: MacroConfig) {
+    configRef.current = next;
+    setConfig(next);
+  }
+
+  function updateConfigLive(updater: (current: MacroConfig) => MacroConfig) {
+    const next = updater(configRef.current);
+    setConfigLive(next);
+    return next;
+  }
   function adaptPresetForCurrentResolution(preset: MacroPreset): MacroPreset {
     return {
       ...preset,
@@ -219,18 +231,18 @@ export function App() {
 
   function patchConfig(patch: Partial<MacroConfig>) {
     stopBeforeEditing();
-    setConfig((current) => ({ ...current, ...patch }));
+    updateConfigLive((current) => ({ ...current, ...patch }));
   }
 
   function patchSelected(patch: Partial<MacroAction>) {
     if (!selected) return;
     stopBeforeEditing();
-    setConfig((current) => ({ ...current, actions: current.actions.map((action) => action.id === selected.id ? { ...action, ...patch } : action) }));
+    updateConfigLive((current) => ({ ...current, actions: current.actions.map((action) => action.id === selected.id ? { ...action, ...patch } : action) }));
   }
 
   function applyResolutionAndSkillSlots(resolution: MacroConfig["resolution"]) {
     stopBeforeEditing("修改分辨率");
-    setConfig((current) => {
+    updateConfigLive((current) => {
       const actions = transformActionsToResolution(current.actions, current.resolution, resolution, "centerAxisScale", current);
       return { ...current, resolution, actions };
     });
@@ -249,7 +261,7 @@ export function App() {
     const used = new Set(config.actions.map((action) => action.hotkey));
     next.hotkey = "qwertasdfgzxcvbf123456".split("").find((key) => !used.has(key)) ?? "f6";
     next.name = `指令${config.actions.length + 1}`;
-    setConfig((current) => ({ ...current, actions: [...current.actions, next] }));
+    updateConfigLive((current) => ({ ...current, actions: [...current.actions, next] }));
     setSelectedId(next.id);
   }
 
@@ -261,7 +273,7 @@ export function App() {
     next.name = `脚本宏 ${config.actions.filter((action) => action.type === "script").length + 1}`;
     next.type = "script";
     next.script = script || next.script;
-    setConfig((current) => ({ ...current, actions: [...current.actions, next] }));
+    updateConfigLive((current) => ({ ...current, actions: [...current.actions, next] }));
     setSelectedId(next.id);
   }
 
@@ -278,7 +290,7 @@ export function App() {
     next.name = file.name.replace(/\.ahk$/i, "") || `脚本宏 ${config.actions.filter((action) => action.type === "script").length + 1}`;
     next.type = "script";
     next.script = file.text;
-    setConfig((current) => ({ ...current, actions: [...current.actions, next] }));
+    updateConfigLive((current) => ({ ...current, actions: [...current.actions, next] }));
     setSelectedId(next.id);
     pushLog(`已导入 AHK 为脚本宏：${file.path}`);
   }
@@ -287,7 +299,7 @@ export function App() {
   function removeSelected() {
     if (!selected) return;
     stopBeforeEditing("删除指令");
-    setConfig((current) => {
+    updateConfigLive((current) => {
       const actions = current.actions.filter((action) => action.id !== selected.id);
       setSelectedId(actions[0]?.id ?? "");
       return { ...current, actions };
@@ -295,8 +307,8 @@ export function App() {
   }
 
   async function saveConfig() {
-    const saved = await api.saveConfig(config);
-    setConfig(saved);
+    const saved = await api.saveConfig(configRef.current);
+    setConfigLive(saved);
     pushLog("配置已保存");
   }
 
@@ -304,13 +316,18 @@ export function App() {
     stopBeforeEditing("载入配置");
     const loaded = await api.loadConfig();
     const normalized = normalizeUiConfig(loaded);
-    setConfig(normalized);
+    setConfigLive(normalized);
     setSelectedId(normalized.actions[0]?.id ?? "");
   }
 
   async function start() {
-    if (!canRun) return;
-    const result = await api.startListening(config);
+    const liveConfig = configRef.current;
+    const liveErrors = validateConfig(liveConfig);
+    const enabledActions = liveConfig.actions.filter((action) => action.enabled);
+    if (liveErrors.length > 0 || enabledActions.length === 0) return;
+    if (status === "listening") await api.stopListening();
+    pushLog(`前端发送 ${enabledActions.length} 条启用宏：${enabledActions.map((action) => `${action.hotkey}:${action.type}:${action.name}@${action.targetX},${action.targetY}`).join("，")}`);
+    const result = await api.startListening(liveConfig);
     setStatus(result.status);
     setStatusText(result.message);
   }
@@ -323,7 +340,8 @@ export function App() {
 
   async function testSelected() {
     if (!selected || errors.length > 0) return;
-    const result = await api.testMacro(selected, config);
+    const liveSelected = configRef.current.actions.find((action) => action.id === selected.id) ?? selected;
+    const result = await api.testMacro(liveSelected, configRef.current);
     setStatusText(result.message);
     pushLog(result.message);
   }
@@ -587,3 +605,7 @@ export function App() {
     </main>
   );
 }
+
+
+
+
