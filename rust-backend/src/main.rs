@@ -481,6 +481,21 @@ fn execute_drag_once(action: &Action, cancel: &AtomicBool) {
     runtime().drag_active.store(false, Ordering::SeqCst);
 }
 
+fn execute_point_hold(action: &Action, cancel: &AtomicBool) {
+    let original = cursor_pos();
+    emit_log("info", &format!("Rust point hold {} -> {},{}", action.name, action.target_x, action.target_y));
+    move_logical(action.target_x, action.target_y);
+    thread::sleep(Duration::from_millis(1));
+    send_mouse_left(true);
+    thread::sleep(clamp_seconds(action.click_gap, 0.012, 0.001, 0.2));
+    send_mouse_left(false);
+    while !cancel.load(Ordering::Relaxed) && !runtime().stop.load(Ordering::Relaxed) {
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(50));
+    move_screen(original);
+}
+
 fn execute_point_once(action: &Action) {
     let original = cursor_pos();
     emit_log("info", &format!("Rust point immediate {} -> {},{}", action.name, action.target_x, action.target_y));
@@ -571,7 +586,8 @@ fn execute_action_loop(action: Action, cancel: Arc<AtomicBool>) {
     match action.action_type.as_str() {
         "fastPlay" => while !cancel.load(Ordering::Relaxed) && !runtime().stop.load(Ordering::Relaxed) { execute_fast_play_once(&action); sleep_cancelable(clamp_seconds(action.loop_gap, 0.001, 0.0, 0.5), &cancel); },
         "drag" => while !cancel.load(Ordering::Relaxed) && !runtime().stop.load(Ordering::Relaxed) { execute_drag_once(&action, &cancel); sleep_cancelable(clamp_seconds(action.loop_gap, 0.08, 0.05, 0.8), &cancel); },
-        "point" | "click" | "rapid" => execute_point_once(&action),
+        "point" => execute_point_hold(&action, &cancel),
+        "click" | "rapid" => execute_point_once(&action),
         "script" => { if let Err(error) = execute_script_once(&action, &cancel) { emit_log("error", &format!("Rust script failed: {}", error)); } },
         _ => {}
     }
