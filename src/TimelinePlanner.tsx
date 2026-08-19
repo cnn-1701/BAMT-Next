@@ -482,7 +482,8 @@ export function TimelinePlanner({ api, pushLog }: { api: MacroApi; pushLog: (mes
       const state = timelineDeckState(phase);
       const copied = state.copiedCards[cardIndex];
       const copyTarget = cardFromIndex(phase, phase.copyTargetIndex);
-      const cardName = phase.playMode === "copy" ? copyTarget + "（复制）" : copied ? copied + "（复制）" : cardFromIndex(phase, cardIndex);
+      const sourceName = cardFromIndex(phase, cardIndex);
+      const cardName = phase.playMode === "copy" ? sourceName + "复制给" + copyTarget : copied ? copied + "（复制）" : sourceName;
       const entry: TimelineEntry = {
         id: uid("entry"),
         triggerType: phase.defaultTrigger,
