@@ -58,6 +58,34 @@ export const DEFAULT_SKILL_SLOT_BOTTOM_OFFSET_RATIO = 0.071;
 export const DEFAULT_SMOOTH_MOVE_MIN_STEPS = 2;
 export const DEFAULT_SMOOTH_MOVE_STEP_RATE = 80;
 
+export interface FastPlayTimingRecommendation {
+  stageMs: number;
+  effectiveRate: number;
+  frameMs: number;
+  cardHoldDuration: number;
+  cardClickGap: number;
+  clickHoldDuration: number;
+  loopGap: number;
+}
+
+export function recommendFastPlayTiming(displayRefreshRate: number, gameFrameRate: number, verticalSyncEnabled: boolean): FastPlayTimingRecommendation {
+  const refreshRate = Math.max(30, Math.min(1000, Number(displayRefreshRate) || 60));
+  const frameRate = Math.max(30, Math.min(1000, Number(gameFrameRate) || 60));
+  const effectiveRate = verticalSyncEnabled ? refreshRate : frameRate;
+  const frameMs = 1000 / effectiveRate;
+  const stageMs = verticalSyncEnabled ? Math.ceil(frameMs) : Math.ceil(frameMs * 1.2);
+  const seconds = stageMs / 1000;
+  return {
+    stageMs,
+    effectiveRate,
+    frameMs,
+    cardHoldDuration: seconds,
+    cardClickGap: seconds,
+    clickHoldDuration: seconds,
+    loopGap: seconds
+  };
+}
+
 export const DEFAULT_MACRO_TUNING = {
   skillSlotXOffsets: DEFAULT_SKILL_SLOT_X_OFFSETS,
   skillSlotBottomOffsetRatio: DEFAULT_SKILL_SLOT_BOTTOM_OFFSET_RATIO,
@@ -181,10 +209,11 @@ export function transformActionsToResolution(actions: MacroAction[], from: Resol
         targetX: slot.targetX,
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
+        cardHoldDuration: action.cardHoldDuration ?? slot.cardHoldDuration,
         dragDuration: normalizeDragDuration(action) || slot.dragDuration,
         clickGap: slot.clickGap,
-        cardClickGap: slot.cardClickGap,
-        loopGap: slot.loopGap,
+        cardClickGap: action.cardClickGap ?? slot.cardClickGap,
+        loopGap: action.loopGap ?? slot.loopGap,
         hotkey: action.hotkey || slot.hotkey,
         enabled: action.enabled,
         script: action.script
@@ -209,10 +238,11 @@ export function transformPresetToResolution(preset: MacroPreset, resolution: Res
         targetX: slot.targetX,
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
+        cardHoldDuration: action.cardHoldDuration ?? slot.cardHoldDuration,
         dragDuration: normalizeDragDuration(action) || slot.dragDuration,
         clickGap: slot.clickGap,
-        cardClickGap: slot.cardClickGap,
-        loopGap: slot.loopGap,
+        cardClickGap: action.cardClickGap ?? slot.cardClickGap,
+        loopGap: action.loopGap ?? slot.loopGap,
         hotkey: action.hotkey || slot.hotkey,
         enabled: action.enabled,
         script: action.script
@@ -284,6 +314,7 @@ export function createAction(seed = Date.now()): MacroAction {
     targetX: 1280,
     targetY: 800,
     dragDistance: 300,
+    cardHoldDuration: 0.007,
     dragDuration: 0.02,
     clickGap: 0.01,
     cardClickGap: 0.005,
@@ -305,10 +336,11 @@ export function createSkillDragActions(resolution: Resolution, tuning?: MacroTun
     targetX: slot.x,
     targetY: slot.y,
     dragDistance: 300,
-    dragDuration: 0.02,
+    cardHoldDuration: 0.007,
+    dragDuration: 0.007,
     clickGap: 0.1,
-    cardClickGap: 0.002,
-    loopGap: 0.001,
+    cardClickGap: 0.007,
+    loopGap: 0.007,
     enabled: true,
     script: DEFAULT_SCRIPT_MACRO
   }));
@@ -320,6 +352,10 @@ export const DEFAULT_CONFIG: MacroConfig = {
   exitKey: FIXED_EMERGENCY_EXIT_KEY,
   inputTakeoverEnabled: false,
   inputBackend: "cursor",
+  displayRefreshRate: 160,
+  gameFrameRate: 60,
+  verticalSyncEnabled: true,
+  autoTuneFastPlayTiming: true,
   ...DEFAULT_MACRO_TUNING,
   actions: createSkillDragActions({ width: 2560, height: 1600 }, DEFAULT_MACRO_TUNING)
 };
@@ -352,7 +388,7 @@ export function validateConfig(config: MacroConfig): string[] {
     if (action.targetX < 0 || action.targetY < 0) errors.push(`${action.name} 的坐标不能为负数`);
     if (action.targetX > config.resolution.width || action.targetY > config.resolution.height) errors.push(`${action.name} 的坐标超出当前分辨率`);
     if (action.type === "script" && !(action.script || "").trim()) errors.push(`${action.name} 的脚本内容不能为空`);
-    if (action.dragDistance <= 0 || action.dragDuration <= 0 || action.clickGap <= 0 || action.cardClickGap < 0 || normalizeLoopGap(action) <= 0) errors.push(`${action.name} 的数值参数必须大于 0`);
+    if (action.dragDistance <= 0 || action.cardHoldDuration <= 0 || action.dragDuration <= 0 || action.clickGap <= 0 || action.cardClickGap < 0 || normalizeLoopGap(action) <= 0) errors.push(`${action.name} 的数值参数必须大于 0`);
   }
   if (!config.actions.some((action) => action.enabled)) errors.push("至少需要启用一条指令");
   return errors;

@@ -8,6 +8,7 @@ const paths = [
   ["导出文件目录", "%APPDATA%/BAMT Next/data/exports/"],
   ["排轴自动保存", "%APPDATA%/BAMT Next/data/timelines/"],
   ["AHK 临时脚本", "%APPDATA%/BAMT Next/data/ahk/bamt-inline.ahk"],
+  ["最速出牌诊断日志", "%APPDATA%/BAMT Next/data/logs/"],
   ["完整技术文档", "README.md"],
 ];
 
@@ -54,6 +55,12 @@ export function ProjectManual({ onClose }: { onClose: () => void }) {
         </section>
 
         <section>
+          <h3>最速出牌时序推荐</h3>
+          <p>启动弹窗会根据屏幕刷新率、游戏帧率和垂直同步状态推荐四阶段时序。四个数字依次表示：选牌按下、选牌释放到鼠标按下、鼠标按住、下一轮间隔。</p>
+          <p>当前对照测试中，160 Hz并开启垂直同步时推荐7/7/7/7ms；关闭垂直同步并以60FPS运行时推荐20/20/20/20ms。自动应用可以关闭，关闭后保留各条最速出牌宏的手动参数。</p>
+        </section>
+
+        <section>
           <h3>宏类型</h3>
           <p><strong>点位：</strong>移动到目标坐标点击，并回到原鼠标位置。</p>
           <p><strong>拖动：</strong>按住热键循环执行手牌拖动：到手牌位按下，竖直上拖，回到触发热键时的鼠标位置释放。</p>
@@ -83,6 +90,12 @@ export function ProjectManual({ onClose }: { onClose: () => void }) {
         <section>
           <h3>AHK 与 Rust 输入链路</h3>
           <p>实测发现，AHK v2 的 SendInput / Click 在游戏内执行「1/2/3 选牌 + 当前鼠标点击」时更不容易卡牌。2.2.0 已把主线宏后端改为 Rust，减少早期 Python 手写 SendInput 事件链路带来的不稳定。AHK 解释器仍用于对照测试。</p>
+        </section>
+
+        <section>
+          <h3>宏诊断日志</h3>
+          <p>最速出牌运行时只在内存中记录时间戳，松开热键后才写入 logs 目录，避免实时写盘影响宏。日志逐轮记录选牌键按下/释放、鼠标按下/释放、实际间隔、SendInput 返回值、P95 和最大延迟。</p>
+          <p>出现卡牌回弹时，先按住宏做一次短测试并松开，再点击「打开诊断日志」。若 inputFailures 或 orderViolations 不为 0，说明输入注入或执行顺序异常；二者为 0 时再检查实际延迟和游戏帧窗口。</p>
         </section>
 
         <section>

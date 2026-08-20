@@ -10,6 +10,7 @@ const api: MacroApi = {
   pickTimelineFile: () => ipcRenderer.invoke("macro:pick-timeline-file"),
   pickPresetPackage: () => ipcRenderer.invoke("macro:pick-preset-package"),
   openDataDir: () => ipcRenderer.invoke("macro:open-data-dir"),
+  openLogDir: () => ipcRenderer.invoke("macro:open-log-dir"),
   getInitialConfig: () => ipcRenderer.invoke("macro:get-initial-config"),
   saveConfig: (config: MacroConfig) => ipcRenderer.invoke("macro:save-config", config),
   loadConfig: () => ipcRenderer.invoke("macro:load-config"),

@@ -16,6 +16,7 @@ export interface MacroAction {
   targetX: number;
   targetY: number;
   dragDistance: number;
+  cardHoldDuration: number;
   dragDuration: number;
   clickGap: number;
   cardClickGap: number;
@@ -30,6 +31,10 @@ export interface MacroConfig {
   exitKey: string;
   inputTakeoverEnabled: boolean;
   inputBackend: InputBackend;
+  displayRefreshRate: number;
+  gameFrameRate: number;
+  verticalSyncEnabled: boolean;
+  autoTuneFastPlayTiming: boolean;
   skillSlotXOffsets: number[];
   skillSlotBottomOffsetRatio: number;
   smoothMoveMinSteps: number;
@@ -57,6 +62,7 @@ export interface StoragePaths {
   presetExportDir: string;
   ahkDataDir: string;
   timelineDir: string;
+  logDir: string;
   relative: {
     dataDir: string;
     configPath: string;
@@ -65,6 +71,7 @@ export interface StoragePaths {
     presetExportDir: string;
     ahkDataDir: string;
     timelineDir: string;
+    logDir: string;
   };
 }
 
@@ -89,6 +96,7 @@ export interface MacroApi {
   pickTimelineFile(): Promise<PresetFilePayload | null>;
   pickPresetPackage(): Promise<PresetFilePayload | null>;
   openDataDir(): Promise<StatusPayload>;
+  openLogDir(): Promise<StatusPayload>;
   getInitialConfig(): Promise<MacroConfig>;
   saveConfig(config: MacroConfig): Promise<MacroConfig>;
   loadConfig(): Promise<MacroConfig>;

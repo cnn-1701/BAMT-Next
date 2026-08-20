@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Archive, BookOpen, Code2, CalendarDays, ChevronRight, Crosshair, FileDown, FileUp, Hand, Home, Keyboard, LetterText, ListChecks, Menu, MousePointerClick, PanelLeftClose, PanelLeftOpen, Play, Plus, Save, Settings, Shuffle, Square, Trash2, Zap } from "lucide-react";
+import { Archive, BookOpen, Code2, CalendarDays, ChevronRight, Crosshair, FileDown, FileUp, FolderOpen, Hand, Home, Keyboard, LetterText, ListChecks, Menu, MousePointerClick, PanelLeftClose, PanelLeftOpen, Play, Plus, Save, Settings, Shuffle, Square, Trash2, Zap } from "lucide-react";
 import {
   calculateSkillSlots,
   createAction,
@@ -12,6 +12,7 @@ import {
   normalizeMacroPackage,
   parseAhkMacroPackage,
   PRESET_RESOLUTIONS,
+  recommendFastPlayTiming,
   transformActionsToResolution,
   transformPoint,
   transformPresetToResolution,
@@ -66,10 +67,11 @@ function normalizeUiConfig(raw: Partial<MacroConfig>): MacroConfig {
         targetX: slot.targetX,
         targetY: slot.targetY,
         dragDistance: slot.dragDistance,
-        dragDuration: slot.dragDuration,
+        cardHoldDuration: normalizedAction.cardHoldDuration ?? slot.cardHoldDuration,
+        dragDuration: normalizedAction.dragDuration ?? slot.dragDuration,
         clickGap: slot.clickGap,
-        cardClickGap: slot.cardClickGap,
-        loopGap: slot.loopGap,
+        cardClickGap: normalizedAction.cardClickGap ?? slot.cardClickGap,
+        loopGap: normalizedAction.loopGap ?? slot.loopGap,
         hotkey: normalizedAction.hotkey || slot.hotkey,
         enabled: normalizedAction.enabled
       };
@@ -123,6 +125,7 @@ export function App() {
   const enabledCount = config.actions.filter((action) => action.enabled).length;
   const canRun = errors.length === 0 && enabledCount > 0;
   const converterResult = transformPoint({ x: converter.x, y: converter.y }, { width: converter.fromW, height: converter.fromH }, { width: converter.toW, height: converter.toH }, converter.mode);
+  const fastPlayTiming = recommendFastPlayTiming(config.displayRefreshRate, config.gameFrameRate, config.verticalSyncEnabled);
 
   useEffect(() => {
     void api.getStoragePaths().then(setStoragePaths).catch(() => undefined);
@@ -279,6 +282,44 @@ export function App() {
     const offsets = [...(config.skillSlotXOffsets || [0.2, 0.28, 0.362])];
     offsets[index] = value;
     patchConfig({ skillSlotXOffsets: offsets });
+  }
+
+  function withRecommendedFastPlayTiming(current: MacroConfig) {
+    const timing = recommendFastPlayTiming(current.displayRefreshRate, current.gameFrameRate, current.verticalSyncEnabled);
+    return {
+      ...current,
+      actions: current.actions.map((action) => action.type === "fastPlay" ? {
+        ...action,
+        cardHoldDuration: timing.cardHoldDuration,
+        cardClickGap: timing.cardClickGap,
+        dragDuration: timing.clickHoldDuration,
+        loopGap: timing.loopGap
+      } : action)
+    };
+  }
+
+  function applyRecommendedFastPlayTiming() {
+    stopBeforeEditing("应用最速出牌推荐时序");
+    const next = updateConfigLive(withRecommendedFastPlayTiming);
+    const timing = recommendFastPlayTiming(next.displayRefreshRate, next.gameFrameRate, next.verticalSyncEnabled);
+    pushLog(`已应用最速出牌推荐时序：${timing.stageMs}/${timing.stageMs}/${timing.stageMs}/${timing.stageMs}ms`);
+  }
+
+  async function confirmStartup() {
+    let next = configRef.current;
+    if (next.autoTuneFastPlayTiming) next = withRecommendedFastPlayTiming(next);
+    setConfigLive(next);
+    try {
+      const saved = await api.saveConfig(next);
+      setConfigLive(normalizeUiConfig(saved));
+      if (next.autoTuneFastPlayTiming) {
+        const timing = recommendFastPlayTiming(next.displayRefreshRate, next.gameFrameRate, next.verticalSyncEnabled);
+        pushLog(`启动设置已保存，最速出牌使用 ${timing.stageMs}/${timing.stageMs}/${timing.stageMs}/${timing.stageMs}ms`);
+      }
+    } catch (error) {
+      pushLog(`启动设置保存失败：${String(error instanceof Error ? error.message : error)}`);
+    }
+    setOnboardingOpen(false);
   }
 
   function addAction() {
@@ -493,6 +534,7 @@ export function App() {
             <button onClick={saveConfig}><Save size={17} />保存</button>
             <button onClick={loadConfig}><FileDown size={17} />载入</button>
             <button onClick={() => void api.openDataDir().then((result) => pushLog(result.message))}><Archive size={17} />打开 data</button>
+            <button onClick={() => void api.openLogDir().then((result) => pushLog(result.message))}><FolderOpen size={17} />宏诊断日志</button>
             <button onClick={() => setLetterOpen(true)}><LetterText size={17} />信件</button>
           </div>
         </section>
@@ -551,7 +593,7 @@ export function App() {
               {selected.type === "fastPlay" && <label>选牌键<input value={selected.cardKey || ""} placeholder="1 / 2 / 3" onChange={(event) => patchSelected({ cardKey: event.target.value.trim() })} /></label>}
               {selected.type === "script" && <label className="script-editor-label">脚本内容<textarea className="macro-script-editor" value={selected.script || ""} onChange={(event) => patchSelected({ script: event.target.value })} spellCheck={false} /></label>}
               {selected.type === "drag" && <label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.05} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label>}
-              {selected.type === "fastPlay" && <div className="field-row"><label>单轮内间隔<input type="number" step="0.001" value={selected.cardClickGap ?? 0.010} onChange={(event) => patchSelected({ cardClickGap: Number(event.target.value) })} /></label><label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.001} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label></div>}
+              {selected.type === "fastPlay" && <div className="fast-play-timing-grid"><label>选牌按下<input type="number" step="0.001" min="0.001" value={selected.cardHoldDuration ?? 0.007} onChange={(event) => patchSelected({ cardHoldDuration: Number(event.target.value) })} /></label><label>牌到点击<input type="number" step="0.001" min="0.001" value={selected.cardClickGap ?? 0.007} onChange={(event) => patchSelected({ cardClickGap: Number(event.target.value) })} /></label><label>点击按住<input type="number" step="0.001" min="0.001" value={selected.dragDuration ?? 0.007} onChange={(event) => patchSelected({ dragDuration: Number(event.target.value) })} /></label><label>循环间隔<input type="number" step="0.001" min="0.001" value={selected.loopGap ?? 0.007} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label></div>}
               {selected.type === "autoClick" && <label>连点间隔<input type="number" step="0.01" value={selected.clickGap} onChange={(event) => patchSelected({ clickGap: Number(event.target.value) })} /></label>}
               <div className="action-row"><button className="primary ghost" onClick={testSelected} disabled={errors.length > 0}><Play size={17} />测试</button><button className="danger ghost" onClick={removeSelected}><Trash2 size={17} />删除</button></div>
               {captureText && <p className="hint">{captureText}</p>}
@@ -571,7 +613,10 @@ export function App() {
               ))}
             </div>
             {errors.length > 0 && <div className="error-box">{errors.map((error) => <p key={error}>{error}</p>)}</div>}
-            <div className="log-box"><h3>状态记录</h3>{logs.length === 0 ? <p>等待操作</p> : logs.map((log, index) => <p key={`${log}-${index}`}>{log}</p>)}</div>
+            <div className="log-box">
+              <div className="log-heading"><h3>状态记录</h3><div><button className="log-tool" onClick={() => void api.openLogDir().then((result) => pushLog(result.message))}><FolderOpen size={15} />打开诊断日志</button><button className="log-tool" onClick={() => setLogs([])}>清空</button></div></div>
+              {logs.length === 0 ? <p>等待操作</p> : logs.map((log, index) => <p key={`${log}-${index}`}>{log}</p>)}
+            </div>
           </section>
         </section>
 
@@ -594,6 +639,16 @@ export function App() {
               <p>键盘接管模式默认关闭。开启后监听期间会尽量拦截常用键盘输入，只放行宏键和固定强制停止键 X。拿不准的时候，先保持关闭。</p>
             </div>
             <div className="resolution-grid startup-resolutions">{PRESET_RESOLUTIONS.map((preset) => <button key={preset.label} className={preset.width === config.resolution.width && preset.height === config.resolution.height ? "choice active" : "choice"} onClick={() => applyResolutionAndSkillSlots({ width: preset.width, height: preset.height })}>{preset.label}</button>)}</div>
+            <section className="startup-performance">
+              <div className="startup-performance-heading"><div><h3>最速出牌时序</h3><p>根据运行环境推荐四阶段间隔，避免多个输入挤在同一次游戏更新中。</p></div><label className="startup-auto-toggle"><input type="checkbox" checked={config.autoTuneFastPlayTiming} onChange={(event) => patchConfig({ autoTuneFastPlayTiming: event.target.checked })} />自动应用</label></div>
+              <div className="startup-setting-grid">
+                <label>屏幕刷新率 Hz<input type="number" min="30" max="1000" value={config.displayRefreshRate} onChange={(event) => patchConfig({ displayRefreshRate: Number(event.target.value) })} /></label>
+                <div className="startup-option-group"><span>游戏帧率</span><div>{[30, 60].map((fps) => <button key={fps} type="button" className={config.gameFrameRate === fps ? "choice active" : "choice"} onClick={() => patchConfig({ gameFrameRate: fps })}>{fps}FPS</button>)}</div></div>
+                <div className="startup-option-group"><span>垂直同步</span><div><button type="button" className={config.verticalSyncEnabled ? "choice active" : "choice"} onClick={() => patchConfig({ verticalSyncEnabled: true })}>开启</button><button type="button" className={!config.verticalSyncEnabled ? "choice active" : "choice"} onClick={() => patchConfig({ verticalSyncEnabled: false })}>关闭</button></div></div>
+              </div>
+              <div className="startup-refresh-presets"><span>刷新率预设</span><div>{[60, 90, 120, 144, 160, 240, 300].map((rate) => <button key={rate} type="button" className={config.displayRefreshRate === rate ? "choice active" : "choice"} onClick={() => patchConfig({ displayRefreshRate: rate })}>{rate}</button>)}</div></div>
+              <div className="timing-recommendation"><div><span>计算基准</span><strong>{fastPlayTiming.effectiveRate} Hz · {fastPlayTiming.frameMs.toFixed(2)}ms/帧</strong></div><div><span>推荐四阶段</span><strong>{fastPlayTiming.stageMs} / {fastPlayTiming.stageMs} / {fastPlayTiming.stageMs} / {fastPlayTiming.stageMs} ms</strong></div><button type="button" className="capture" onClick={applyRecommendedFastPlayTiming}>立即应用</button></div>
+            </section>
             <div className="startup-summary">{calculateSkillSlots(config.resolution, config).map((slot, index) => <span key={index}>{["Q", "W", "E"][index]}: {slot.x}, {slot.y}</span>)}</div>
             <div className="startup-checklist">
               <span>1. 选对分辨率</span>
@@ -601,7 +656,7 @@ export function App() {
               <span>3. 保存成自己的预设</span>
             </div>
             <p className="startup-warning">固定紧急停止键：<strong>X</strong>。这个按键不可修改，也不会被键盘接管模式屏蔽。</p>
-            <button className="primary" onClick={() => setOnboardingOpen(false)}>确认并进入</button>
+            <button className="primary" onClick={() => void confirmStartup()}>确认并进入</button>
           </article>
         </div>
       )}

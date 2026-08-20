@@ -25,6 +25,7 @@ data/imports/
 data/exports/
 data/timelines/
 data/ahk/
+data/logs/
 
 # Historical root ignore rules
 node_modules/

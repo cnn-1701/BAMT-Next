@@ -18,6 +18,7 @@ const presetImportDir = path.join(dataDir, "imports");
 const presetExportDir = path.join(dataDir, "exports");
 const ahkDataDir = path.join(dataDir, "ahk");
 const timelineDir = path.join(dataDir, "timelines");
+const logDir = path.join(dataDir, "logs");
 const configPath = path.join(configDir, "blue_archive_config.json");
 const presetLibraryPath = path.join(presetDir, "preset-library.json");
 
@@ -52,7 +53,7 @@ function rustBackendCandidates(): string[] {
   return [...new Set(candidates)];
 }
 function ensureDataDirs(): void {
-  for (const dir of [dataDir, configDir, presetDir, presetImportDir, presetExportDir, ahkDataDir, timelineDir]) fs.mkdirSync(dir, { recursive: true });
+  for (const dir of [dataDir, configDir, presetDir, presetImportDir, presetExportDir, ahkDataDir, timelineDir, logDir]) fs.mkdirSync(dir, { recursive: true });
 }
 
 function safeTimelineName(filename: string): string {
@@ -87,6 +88,7 @@ function storagePaths() {
     presetExportDir,
     ahkDataDir,
     timelineDir,
+    logDir,
     relative: {
       dataDir: isDev ? "data" : "%APPDATA%/BAMT Next/data",
       configPath: isDev ? "data/config/blue_archive_config.json" : "%APPDATA%/BAMT Next/data/config/blue_archive_config.json",
@@ -94,7 +96,8 @@ function storagePaths() {
       presetImportDir: isDev ? "data/imports" : "%APPDATA%/BAMT Next/data/imports",
       presetExportDir: isDev ? "data/exports" : "%APPDATA%/BAMT Next/data/exports",
       ahkDataDir: isDev ? "data/ahk" : "%APPDATA%/BAMT Next/data/ahk",
-      timelineDir: isDev ? "data/timelines" : "%APPDATA%/BAMT Next/data/timelines"
+      timelineDir: isDev ? "data/timelines" : "%APPDATA%/BAMT Next/data/timelines",
+      logDir: isDev ? "data/logs" : "%APPDATA%/BAMT Next/data/logs"
     }
   };
 }
@@ -179,7 +182,7 @@ class MacroBackend {
   private async spawnRustWith(command: string): Promise<void> {
     if (path.isAbsolute(command) && !fs.existsSync(command)) throw new Error("Rust backend executable not found");
     ensureDataDirs();
-    const child = spawn(command, [], { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, BAMT_CONFIG_PATH: configPath } });
+    const child = spawn(command, [], { cwd: projectDir, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, BAMT_CONFIG_PATH: configPath, BAMT_LOG_DIR: logDir } });
     this.onEvent({ type: "log", payload: { level: "info", message: `Rust backend exe: ${command}; config: ${configPath}` } });
     let stderr = "";
     child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
@@ -290,6 +293,11 @@ function registerIpc(): void {
     ensureDataDirs();
     const error = await shell.openPath(dataDir);
     return error ? { status: "error", message: error } : { status: "ready", message: "已打开数据目录" };
+  });
+  ipcMain.handle("macro:open-log-dir", async () => {
+    ensureDataDirs();
+    const error = await shell.openPath(logDir);
+    return error ? { status: "error", message: error } : { status: "ready", message: "已打开宏诊断日志目录" };
   });
   ipcMain.handle("macro:get-initial-config", async () => backend!.request<MacroConfig>("get_initial_config"));
   ipcMain.handle("macro:save-config", async (_, config: MacroConfig) => backend!.request<MacroConfig>("save_config", config));

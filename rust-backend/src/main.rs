@@ -1,13 +1,16 @@
 ﻿use std::collections::HashMap;
 use std::env;
+use std::ffi::c_void;
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::hint::spin_loop;
+use std::io::{self, BufRead, BufWriter, Write};
 use std::mem::{size_of, zeroed};
 use std::path::PathBuf;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 type Bool = i32;
 type Dword = u32;
@@ -19,6 +22,7 @@ type Lparam = isize;
 type Lresult = isize;
 type Hhook = isize;
 type Hwnd = isize;
+type Handle = isize;
 
 const INPUT_MOUSE: Dword = 0;
 const INPUT_KEYBOARD: Dword = 1;
@@ -41,6 +45,13 @@ const SM_XVIRTUALSCREEN: i32 = 76;
 const SM_YVIRTUALSCREEN: i32 = 77;
 const SM_CXVIRTUALSCREEN: i32 = 78;
 const SM_CYVIRTUALSCREEN: i32 = 79;
+const THREAD_PRIORITY_HIGHEST: i32 = 2;
+const WORKER_COUNT: usize = 4;
+const CREATE_WAITABLE_TIMER_HIGH_RESOLUTION: Dword = 0x00000002;
+const TIMER_MODIFY_STATE: Dword = 0x0002;
+const SYNCHRONIZE: Dword = 0x00100000;
+const WAIT_OBJECT_0: Dword = 0;
+const INFINITE: Dword = 0xffffffff;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
@@ -87,7 +98,21 @@ extern "system" {
 }
 
 #[link(name = "kernel32")]
-extern "system" { fn GetCurrentThreadId() -> Dword; }
+extern "system" {
+    fn GetCurrentThreadId() -> Dword;
+    fn GetCurrentThread() -> isize;
+    fn SetThreadPriority(h_thread: isize, priority: i32) -> Bool;
+    fn CreateWaitableTimerExW(attributes: *const c_void, name: *const u16, flags: Dword, access: Dword) -> Handle;
+    fn SetWaitableTimer(timer: Handle, due_time: *const i64, period: Long, completion: *const c_void, argument: *const c_void, resume: Bool) -> Bool;
+    fn WaitForSingleObject(handle: Handle, milliseconds: Dword) -> Dword;
+    fn CloseHandle(handle: Handle) -> Bool;
+}
+
+#[link(name = "winmm")]
+extern "system" {
+    fn timeBeginPeriod(period: Uint) -> Uint;
+    fn timeEndPeriod(period: Uint) -> Uint;
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Resolution { width: i32, height: i32 }
@@ -102,6 +127,7 @@ struct Action {
     target_x: i32,
     target_y: i32,
     drag_distance: i32,
+    card_hold_duration: f64,
     drag_duration: f64,
     card_click_gap: f64,
     click_gap: f64,
@@ -110,6 +136,46 @@ struct Action {
 }
 
 struct Request { id: String, command: String, payload: String }
+
+struct WorkerJob {
+    action: Action,
+    vk: u32,
+    cancel: Arc<AtomicBool>,
+    queued_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct FastPlayCycleTrace {
+    cycle: u64,
+    cycle_start_us: u64,
+    key_down_us: u64,
+    key_up_us: u64,
+    mouse_down_us: u64,
+    mouse_up_us: u64,
+    cycle_end_us: u64,
+    key_down_ok: bool,
+    key_up_ok: bool,
+    mouse_down_ok: bool,
+    mouse_up_ok: bool,
+}
+
+struct FastPlayTrace {
+    action_id: String,
+    action_name: String,
+    hotkey: String,
+    card_key: String,
+    started_wall_ms: u128,
+    started: Instant,
+    queue_delay_us: u64,
+    requested_key_hold_us: u64,
+    requested_card_gap_us: u64,
+    requested_click_hold_us: u64,
+    requested_loop_gap_us: u64,
+    cycles: Vec<FastPlayCycleTrace>,
+    dropped_cycles: u64,
+}
+
+const MAX_TRACE_CYCLES: usize = 4096;
 
 struct Runtime {
     stop: AtomicBool,
@@ -122,10 +188,47 @@ struct Runtime {
     actions: Mutex<Vec<Action>>,
     resolution: Mutex<Resolution>,
     active: Mutex<HashMap<u32, Arc<AtomicBool>>>,
+    timer_resolution_active: AtomicBool,
     out: Mutex<()>,
 }
 
 static RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
+static EVENT_TX: OnceLock<mpsc::Sender<String>> = OnceLock::new();
+static WORKER_TX: OnceLock<mpsc::Sender<WorkerJob>> = OnceLock::new();
+
+struct HighResTimer(Handle);
+
+impl HighResTimer {
+    fn new() -> Option<Self> {
+        let access = TIMER_MODIFY_STATE | SYNCHRONIZE;
+        let mut handle = unsafe {
+            CreateWaitableTimerExW(ptr::null(), ptr::null(), CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, access)
+        };
+        if handle == 0 {
+            handle = unsafe { CreateWaitableTimerExW(ptr::null(), ptr::null(), 0, access) };
+        }
+        (handle != 0).then_some(Self(handle))
+    }
+
+    fn sleep(&self, duration: Duration) -> bool {
+        let ticks_100ns = ((duration.as_nanos() + 99) / 100).max(1).min(i64::MAX as u128) as i64;
+        let due_time = -ticks_100ns;
+        unsafe {
+            SetWaitableTimer(self.0, &due_time, 0, ptr::null(), ptr::null(), 0) != 0
+                && WaitForSingleObject(self.0, INFINITE) == WAIT_OBJECT_0
+        }
+    }
+}
+
+impl Drop for HighResTimer {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.0); }
+    }
+}
+
+thread_local! {
+    static HIGH_RES_TIMER: Option<HighResTimer> = HighResTimer::new();
+}
 
 fn runtime() -> Arc<Runtime> {
     RUNTIME.get_or_init(|| Arc::new(Runtime {
@@ -139,6 +242,7 @@ fn runtime() -> Arc<Runtime> {
         actions: Mutex::new(Vec::new()),
         resolution: Mutex::new(Resolution { width: 2560, height: 1600 }),
         active: Mutex::new(HashMap::new()),
+        timer_resolution_active: AtomicBool::new(false),
         out: Mutex::new(()),
     })).clone()
 }
@@ -189,8 +293,19 @@ fn write_line(line: &str) {
     let _ = io::stdout().flush();
 }
 
+fn event_sender() -> &'static mpsc::Sender<String> {
+    EVENT_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<String>();
+        thread::Builder::new().name("bamt-events".to_string()).spawn(move || {
+            while let Ok(line) = rx.recv() { write_line(&line); }
+        }).expect("failed to start event writer");
+        tx
+    })
+}
+
 fn emit(event_type: &str, payload: &str) {
-    write_line(&format!("{{\"event\":{{\"type\":\"{}\",\"payload\":{}}}}}", json_escape(event_type), payload));
+    let line = format!("{{\"event\":{{\"type\":\"{}\",\"payload\":{}}}}}", json_escape(event_type), payload);
+    if event_sender().send(line.clone()).is_err() { write_line(&line); }
 }
 
 fn emit_log(level: &str, message: &str) {
@@ -207,8 +322,139 @@ fn config_path() -> PathBuf {
     env::var_os("BAMT_CONFIG_PATH").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("blue_archive_config.json"))
 }
 
+fn log_dir() -> PathBuf {
+    env::var_os("BAMT_LOG_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("data").join("logs"))
+}
+
+fn duration_us(duration: Duration) -> u64 {
+    duration.as_micros().min(u64::MAX as u128) as u64
+}
+
+fn wall_clock_ms() -> u128 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
+}
+
+fn safe_log_name(value: &str) -> String {
+    let cleaned: String = value.chars().map(|ch| {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '_' }
+    }).collect();
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() { "macro".to_string() } else { trimmed.chars().take(48).collect() }
+}
+
+fn percentile(values: &[u64], percentile: f64) -> u64 {
+    if values.is_empty() { return 0; }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let index = ((sorted.len() - 1) as f64 * percentile).round() as usize;
+    sorted[index.min(sorted.len() - 1)]
+}
+
+impl FastPlayTrace {
+    fn new(action: &Action, queue_delay: Duration) -> Self {
+        Self {
+            action_id: action.id.clone(),
+            action_name: action.name.clone(),
+            hotkey: action.hotkey.clone(),
+            card_key: action.card_key.clone(),
+            started_wall_ms: wall_clock_ms(),
+            started: Instant::now(),
+            queue_delay_us: duration_us(queue_delay),
+            requested_key_hold_us: duration_us(clamp_seconds(action.card_hold_duration, 0.007, 0.001, 0.3)),
+            requested_card_gap_us: duration_us(clamp_seconds(action.card_click_gap, 0.007, 0.0, 0.3)),
+            requested_click_hold_us: duration_us(clamp_seconds(action.drag_duration, 0.007, 0.001, 0.3)),
+            requested_loop_gap_us: duration_us(clamp_seconds(action.loop_gap, 0.007, 0.0, 0.5)),
+            cycles: Vec::with_capacity(MAX_TRACE_CYCLES),
+            dropped_cycles: 0,
+        }
+    }
+
+    fn elapsed_us(&self) -> u64 { duration_us(self.started.elapsed()) }
+
+    fn push(&mut self, cycle: FastPlayCycleTrace) {
+        if self.cycles.len() < MAX_TRACE_CYCLES { self.cycles.push(cycle); }
+        else { self.dropped_cycles += 1; }
+    }
+}
+
+fn write_fast_play_trace(trace: &FastPlayTrace) -> Result<(PathBuf, String), String> {
+    let dir = log_dir();
+    fs::create_dir_all(&dir).map_err(|error| format!("create log directory failed: {}", error))?;
+    let file_name = format!("fast-play-{}-{}.jsonl", trace.started_wall_ms, safe_log_name(&trace.action_id));
+    let path = dir.join(file_name);
+    let file = fs::File::create(&path).map_err(|error| format!("create trace file failed: {}", error))?;
+    let mut writer = BufWriter::new(file);
+
+    writeln!(writer,
+        "{{\"type\":\"header\",\"schema\":1,\"startedWallMs\":{},\"actionId\":\"{}\",\"actionName\":\"{}\",\"hotkey\":\"{}\",\"cardKey\":\"{}\",\"queueDelayUs\":{},\"requested\":{{\"keyHoldUs\":{},\"cardGapUs\":{},\"clickHoldUs\":{},\"loopGapUs\":{}}}}}",
+        trace.started_wall_ms, json_escape(&trace.action_id), json_escape(&trace.action_name),
+        json_escape(&trace.hotkey), json_escape(&trace.card_key), trace.queue_delay_us,
+        trace.requested_key_hold_us, trace.requested_card_gap_us, trace.requested_click_hold_us,
+        trace.requested_loop_gap_us
+    ).map_err(|error| error.to_string())?;
+
+    let mut key_holds = Vec::with_capacity(trace.cycles.len());
+    let mut card_gaps = Vec::with_capacity(trace.cycles.len());
+    let mut click_holds = Vec::with_capacity(trace.cycles.len());
+    let mut active_times = Vec::with_capacity(trace.cycles.len());
+    let mut loop_gaps = Vec::with_capacity(trace.cycles.len().saturating_sub(1));
+    let mut input_failures = 0_u64;
+    let mut order_violations = 0_u64;
+
+    for (index, cycle) in trace.cycles.iter().enumerate() {
+        let key_hold = cycle.key_up_us.saturating_sub(cycle.key_down_us);
+        let card_gap = cycle.mouse_down_us.saturating_sub(cycle.key_up_us);
+        let click_hold = cycle.mouse_up_us.saturating_sub(cycle.mouse_down_us);
+        let active = cycle.mouse_up_us.saturating_sub(cycle.cycle_start_us);
+        let loop_gap = if index == 0 { 0 } else { cycle.cycle_start_us.saturating_sub(trace.cycles[index - 1].cycle_end_us) };
+        key_holds.push(key_hold);
+        card_gaps.push(card_gap);
+        click_holds.push(click_hold);
+        active_times.push(active);
+        if index > 0 { loop_gaps.push(loop_gap); }
+        input_failures += [cycle.key_down_ok, cycle.key_up_ok, cycle.mouse_down_ok, cycle.mouse_up_ok].iter().filter(|ok| !**ok).count() as u64;
+        if !(cycle.cycle_start_us <= cycle.key_down_us
+            && cycle.key_down_us <= cycle.key_up_us
+            && cycle.key_up_us <= cycle.mouse_down_us
+            && cycle.mouse_down_us <= cycle.mouse_up_us
+            && cycle.mouse_up_us <= cycle.cycle_end_us) {
+            order_violations += 1;
+        }
+        writeln!(writer,
+            "{{\"type\":\"cycle\",\"cycle\":{},\"timeUs\":{{\"start\":{},\"keyDown\":{},\"keyUp\":{},\"mouseDown\":{},\"mouseUp\":{},\"end\":{}}},\"actualUs\":{{\"keyHold\":{},\"cardGap\":{},\"clickHold\":{},\"active\":{},\"loopGap\":{}}},\"sendInputOk\":{{\"keyDown\":{},\"keyUp\":{},\"mouseDown\":{},\"mouseUp\":{}}}}}",
+            cycle.cycle, cycle.cycle_start_us, cycle.key_down_us, cycle.key_up_us,
+            cycle.mouse_down_us, cycle.mouse_up_us, cycle.cycle_end_us,
+            key_hold, card_gap, click_hold, active, loop_gap,
+            cycle.key_down_ok, cycle.key_up_ok, cycle.mouse_down_ok, cycle.mouse_up_ok
+        ).map_err(|error| error.to_string())?;
+    }
+
+    let late_threshold = 1_000_u64;
+    let late_count = key_holds.iter().filter(|value| **value > trace.requested_key_hold_us + late_threshold).count()
+        + card_gaps.iter().filter(|value| **value > trace.requested_card_gap_us + late_threshold).count()
+        + click_holds.iter().filter(|value| **value > trace.requested_click_hold_us + late_threshold).count()
+        + loop_gaps.iter().filter(|value| **value > trace.requested_loop_gap_us + late_threshold).count();
+    let summary = format!(
+        "{}轮 | 队列{}us | 选牌P95 {}us | 牌到点击P95 {}us | 点击P95 {}us | 循环间隔P95 {}us | >目标1ms {}次 | 输入失败{} | 乱序{}",
+        trace.cycles.len() + trace.dropped_cycles as usize, trace.queue_delay_us,
+        percentile(&key_holds, 0.95), percentile(&card_gaps, 0.95), percentile(&click_holds, 0.95),
+        percentile(&loop_gaps, 0.95), late_count, input_failures, order_violations
+    );
+    writeln!(writer,
+        "{{\"type\":\"summary\",\"cycles\":{},\"droppedCycles\":{},\"inputFailures\":{},\"orderViolations\":{},\"lateOverTargetBy1ms\":{},\"p95Us\":{{\"keyHold\":{},\"cardGap\":{},\"clickHold\":{},\"active\":{},\"loopGap\":{}}},\"maxUs\":{{\"keyHold\":{},\"cardGap\":{},\"clickHold\":{},\"active\":{},\"loopGap\":{}}},\"summary\":\"{}\"}}",
+        trace.cycles.len(), trace.dropped_cycles, input_failures, order_violations, late_count,
+        percentile(&key_holds, 0.95), percentile(&card_gaps, 0.95), percentile(&click_holds, 0.95),
+        percentile(&active_times, 0.95), percentile(&loop_gaps, 0.95),
+        key_holds.iter().copied().max().unwrap_or(0), card_gaps.iter().copied().max().unwrap_or(0),
+        click_holds.iter().copied().max().unwrap_or(0), active_times.iter().copied().max().unwrap_or(0),
+        loop_gaps.iter().copied().max().unwrap_or(0), json_escape(&summary)
+    ).map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())?;
+    Ok((path, summary))
+}
+
 fn default_config() -> String {
-    format!("{{\"version\":\"rust-0.2\",\"resolution\":{{\"width\":2560,\"height\":1600}},\"exitKey\":\"x\",\"inputTakeoverEnabled\":false,\"inputBackend\":\"cursor\",\"skillSlotXOffsets\":[0.2,0.28,0.362],\"skillSlotBottomOffsetRatio\":0.071,\"smoothMoveMinSteps\":2,\"smoothMoveStepRate\":80,\"actions\":{}}}", default_actions())
+    format!("{{\"version\":\"rust-0.2\",\"resolution\":{{\"width\":2560,\"height\":1600}},\"exitKey\":\"x\",\"inputTakeoverEnabled\":false,\"inputBackend\":\"cursor\",\"displayRefreshRate\":160,\"gameFrameRate\":60,\"verticalSyncEnabled\":true,\"autoTuneFastPlayTiming\":true,\"skillSlotXOffsets\":[0.2,0.28,0.362],\"skillSlotBottomOffsetRatio\":0.071,\"smoothMoveMinSteps\":2,\"smoothMoveStepRate\":80,\"actions\":{}}}", default_actions())
 }
 
 fn default_actions() -> String {
@@ -216,7 +462,7 @@ fn default_actions() -> String {
     for (idx, (key, offset)) in [("q", 0.200_f64), ("w", 0.280_f64), ("e", 0.362_f64)].iter().enumerate() {
         let x = (2560.0 * (0.5 + offset)).round() as i32;
         let y = (1600.0_f64 - 2560.0_f64 * 0.071_f64).round() as i32;
-        parts.push(format!("{{\"id\":\"skill-drag-{}\",\"name\":\"Rust Drag {}\",\"hotkey\":\"{}\",\"type\":\"drag\",\"cardKey\":\"{}\",\"targetX\":{},\"targetY\":{},\"dragDistance\":300,\"dragDuration\":0.02,\"clickGap\":0.1,\"cardClickGap\":0.010,\"loopGap\":0.05,\"enabled\":true,\"script\":\"\"}}", idx + 1, idx + 1, key, idx + 1, x, y));
+        parts.push(format!("{{\"id\":\"skill-fast-play-{}\",\"name\":\"最速出牌 {}\",\"hotkey\":\"{}\",\"type\":\"fastPlay\",\"cardKey\":\"{}\",\"targetX\":{},\"targetY\":{},\"dragDistance\":300,\"cardHoldDuration\":0.007,\"dragDuration\":0.007,\"clickGap\":0.1,\"cardClickGap\":0.007,\"loopGap\":0.007,\"enabled\":true,\"script\":\"\"}}", idx + 1, idx + 1, key, idx + 1, x, y));
     }
     format!("[{}]", parts.join(","))
 }
@@ -338,7 +584,9 @@ fn actions_from_config(config: &str) -> Vec<Action> {
         if key_to_vk(&hotkey).is_none() { return None; }
         let card_key = string_value(&obj, "cardKey").unwrap_or_default();
         if action_type == "fastPlay" && key_to_vk(&card_key).is_none() { return None; }
-        let default_loop_gap = if action_type == "drag" { 0.05 } else { 0.001 };
+        let default_loop_gap = if action_type == "drag" { 0.05 } else if action_type == "fastPlay" { 0.007 } else { 0.001 };
+        let default_drag_duration = if action_type == "fastPlay" { 0.007 } else { 0.03 };
+        let default_card_click_gap = if action_type == "fastPlay" { 0.007 } else { 0.010 };
         Some(Action {
             id: string_value(&obj, "id").unwrap_or_else(|| hotkey.clone()),
             name: string_value(&obj, "name").unwrap_or_else(|| format!("Rust {}", action_type)),
@@ -348,8 +596,9 @@ fn actions_from_config(config: &str) -> Vec<Action> {
             target_x: number_value(&obj, "targetX", 1280.0) as i32,
             target_y: number_value(&obj, "targetY", 800.0) as i32,
             drag_distance: number_value(&obj, "dragDistance", 300.0) as i32,
-            drag_duration: number_value(&obj, "dragDuration", 0.03),
-            card_click_gap: number_value(&obj, "cardClickGap", 0.010),
+            card_hold_duration: number_value(&obj, "cardHoldDuration", 0.007),
+            drag_duration: number_value(&obj, "dragDuration", default_drag_duration),
+            card_click_gap: number_value(&obj, "cardClickGap", default_card_click_gap),
             click_gap: number_value(&obj, "clickGap", 0.015),
             loop_gap: number_value(&obj, "loopGap", default_loop_gap),
             script: string_value(&obj, "script").unwrap_or_default(),
@@ -423,42 +672,109 @@ fn clamp_seconds(value: f64, fallback: f64, min: f64, max: f64) -> Duration {
     Duration::from_secs_f64(seconds.clamp(min, max))
 }
 
-fn sleep_cancelable(duration: Duration, cancel: &AtomicBool) {
-    let start = Instant::now();
-    while start.elapsed() < duration {
-        if cancel.load(Ordering::Relaxed) || runtime().stop.load(Ordering::Relaxed) { break; }
-        thread::sleep(Duration::from_millis(1));
+fn wait_cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel
+        .map(|flag| {
+            runtime().stop.load(Ordering::Relaxed) || flag.load(Ordering::Relaxed)
+        })
+        .unwrap_or(false)
+}
+
+fn high_res_sleep(duration: Duration) -> bool {
+    HIGH_RES_TIMER.with(|timer| timer.as_ref().map(|timer| timer.sleep(duration)).unwrap_or(false))
+}
+
+fn wait_until(deadline: Instant, cancel: Option<&AtomicBool>) -> bool {
+    const CANCEL_SLICE: Duration = Duration::from_millis(1);
+    const SPIN_TAIL: Duration = Duration::from_micros(200);
+
+    loop {
+        if wait_cancelled(cancel) { return false; }
+
+        let now = Instant::now();
+        if now >= deadline { return true; }
+
+        let remaining = deadline.duration_since(now);
+        if remaining > SPIN_TAIL {
+            let sleep_time = remaining - SPIN_TAIL;
+            let sleep_slice = if cancel.is_some() { sleep_time.min(CANCEL_SLICE) } else { sleep_time };
+            if !high_res_sleep(sleep_slice) { thread::sleep(sleep_slice); }
+        } else {
+            spin_loop();
+        }
     }
 }
 
-fn send_keyboard(vk: u16, key_up: bool) {
-    let mut input = Input { r#type: INPUT_KEYBOARD, u: InputUnion { ki: KeybdInput { w_vk: vk, w_scan: 0, dw_flags: if key_up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dw_extra_info: 0 } } };
-    unsafe { SendInput(1, &mut input, size_of::<Input>() as i32); }
+fn sleep_precise(duration: Duration) {
+    if !duration.is_zero() {
+        let _ = wait_until(Instant::now() + duration, None);
+    }
 }
 
-fn send_key_press(vk: u16) {
+fn sleep_cancelable(duration: Duration, cancel: &AtomicBool) {
+    if !duration.is_zero() {
+        let _ = wait_until(Instant::now() + duration, Some(cancel));
+    }
+}
+
+fn send_keyboard(vk: u16, key_up: bool) -> bool {
+    let mut input = Input { r#type: INPUT_KEYBOARD, u: InputUnion { ki: KeybdInput { w_vk: vk, w_scan: 0, dw_flags: if key_up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dw_extra_info: 0 } } };
+    unsafe { SendInput(1, &mut input, size_of::<Input>() as i32) == 1 }
+}
+
+fn send_key_press(vk: u16, duration: Duration) {
     send_keyboard(vk, false);
-    thread::sleep(Duration::from_millis(2));
+    sleep_precise(duration);
     send_keyboard(vk, true);
 }
 
-fn send_mouse_left(down: bool) {
+fn send_mouse_left(down: bool) -> bool {
     let mut input = Input { r#type: INPUT_MOUSE, u: InputUnion { mi: MouseInput { dx: 0, dy: 0, mouse_data: 0, dw_flags: if down { MOUSEEVENTF_LEFTDOWN } else { MOUSEEVENTF_LEFTUP }, time: 0, dw_extra_info: 0 } } };
-    unsafe { SendInput(1, &mut input, size_of::<Input>() as i32); }
+    unsafe { SendInput(1, &mut input, size_of::<Input>() as i32) == 1 }
 }
 
 fn click_current(delay: Duration) {
     send_mouse_left(true);
-    thread::sleep(delay);
+    sleep_precise(delay);
     send_mouse_left(false);
 }
 
 fn execute_fast_play_once(action: &Action) {
     if let Some(vk) = key_to_vk(&action.card_key) {
-        send_key_press(vk as u16);
-        thread::sleep(clamp_seconds(action.card_click_gap, 0.010, 0.0, 0.3));
-        click_current(clamp_seconds(action.drag_duration, 0.03, 0.001, 0.3));
+        send_key_press(vk as u16, clamp_seconds(action.card_hold_duration, 0.007, 0.001, 0.3));
+        sleep_precise(clamp_seconds(action.card_click_gap, 0.007, 0.0, 0.3));
+        click_current(clamp_seconds(action.drag_duration, 0.007, 0.001, 0.3));
     }
+}
+
+fn execute_fast_play_once_traced(action: &Action, trace: &mut FastPlayTrace, cycle: u64) {
+    let Some(vk) = key_to_vk(&action.card_key) else { return; };
+    let cycle_start_us = trace.elapsed_us();
+    let key_down_us = trace.elapsed_us();
+    let key_down_ok = send_keyboard(vk as u16, false);
+    sleep_precise(clamp_seconds(action.card_hold_duration, 0.007, 0.001, 0.3));
+    let key_up_us = trace.elapsed_us();
+    let key_up_ok = send_keyboard(vk as u16, true);
+    sleep_precise(clamp_seconds(action.card_click_gap, 0.007, 0.0, 0.3));
+    let mouse_down_us = trace.elapsed_us();
+    let mouse_down_ok = send_mouse_left(true);
+    sleep_precise(clamp_seconds(action.drag_duration, 0.007, 0.001, 0.3));
+    let mouse_up_us = trace.elapsed_us();
+    let mouse_up_ok = send_mouse_left(false);
+    let cycle_end_us = trace.elapsed_us();
+    trace.push(FastPlayCycleTrace {
+        cycle,
+        cycle_start_us,
+        key_down_us,
+        key_up_us,
+        mouse_down_us,
+        mouse_up_us,
+        cycle_end_us,
+        key_down_ok,
+        key_up_ok,
+        mouse_down_ok,
+        mouse_up_ok,
+    });
 }
 
 fn execute_drag_once(action: &Action, cancel: &AtomicBool) {
@@ -582,14 +898,83 @@ fn execute_script_once(action: &Action, cancel: &AtomicBool) -> Result<(), Strin
     Ok(())
 }
 
-fn execute_action_loop(action: Action, cancel: Arc<AtomicBool>) {
+fn execute_action_loop(action: Action, cancel: Arc<AtomicBool>, queue_delay: Duration) -> Option<FastPlayTrace> {
     match action.action_type.as_str() {
-        "fastPlay" => while !cancel.load(Ordering::Relaxed) && !runtime().stop.load(Ordering::Relaxed) { execute_fast_play_once(&action); sleep_cancelable(clamp_seconds(action.loop_gap, 0.001, 0.0, 0.5), &cancel); },
+        "fastPlay" => {
+            let mut trace = FastPlayTrace::new(&action, queue_delay);
+            let mut cycle = 0_u64;
+            while !cancel.load(Ordering::Relaxed) && !runtime().stop.load(Ordering::Relaxed) {
+                cycle += 1;
+                execute_fast_play_once_traced(&action, &mut trace, cycle);
+                sleep_cancelable(clamp_seconds(action.loop_gap, 0.007, 0.0, 0.5), &cancel);
+            }
+            return Some(trace);
+        }
         "drag" => while !cancel.load(Ordering::Relaxed) && !runtime().stop.load(Ordering::Relaxed) { execute_drag_once(&action, &cancel); sleep_cancelable(clamp_seconds(action.loop_gap, 0.08, 0.05, 0.8), &cancel); },
         "point" => execute_point_hold(&action, &cancel),
         "click" | "rapid" => execute_point_once(&action),
         "script" => { if let Err(error) = execute_script_once(&action, &cancel) { emit_log("error", &format!("Rust script failed: {}", error)); } },
         _ => {}
+    }
+    None
+}
+
+fn run_worker_job(job: WorkerJob) {
+    let action = job.action;
+    let queue_delay = job.queued_at.elapsed();
+    emit_log("info", &format!("Rust backend hotkey {} -> {} ({})", action.hotkey, action.name, action.action_type));
+    emit("execution", &format!("{{\"actionId\":\"{}\",\"actionName\":\"{}\",\"phase\":\"start\"}}", json_escape(&action.id), json_escape(&action.name)));
+    let trace = execute_action_loop(action.clone(), job.cancel, queue_delay);
+    send_mouse_left(false);
+    emit("execution", &format!("{{\"actionId\":\"{}\",\"actionName\":\"{}\",\"phase\":\"end\"}}", json_escape(&action.id), json_escape(&action.name)));
+    let _ = runtime().active.lock().map(|mut active| { active.remove(&job.vk); });
+    if let Some(trace) = trace {
+        match write_fast_play_trace(&trace) {
+            Ok((path, summary)) => emit_log("info", &format!("宏诊断 {}：{}；日志 {}", action.name, summary, path.display())),
+            Err(error) => emit_log("error", &format!("宏诊断日志写入失败：{}", error)),
+        }
+    }
+}
+
+fn worker_sender() -> &'static mpsc::Sender<WorkerJob> {
+    WORKER_TX.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<WorkerJob>();
+        let receiver = Arc::new(Mutex::new(rx));
+        for index in 0..WORKER_COUNT {
+            let receiver = receiver.clone();
+            thread::Builder::new().name(format!("bamt-macro-{}", index + 1)).spawn(move || {
+                unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST); }
+                loop {
+                    let job = match receiver.lock() {
+                        Ok(rx) => rx.recv(),
+                        Err(_) => return,
+                    };
+                    match job {
+                        Ok(job) => run_worker_job(job),
+                        Err(_) => return,
+                    }
+                }
+            }).expect("failed to start macro worker");
+        }
+        tx
+    })
+}
+
+fn enable_timer_resolution() {
+    let rt = runtime();
+    if !rt.timer_resolution_active.swap(true, Ordering::SeqCst) {
+        let result = unsafe { timeBeginPeriod(1) };
+        if result != 0 {
+            rt.timer_resolution_active.store(false, Ordering::SeqCst);
+            emit_log("warn", "Windows 1 ms timer resolution is unavailable; using waitable timer fallback");
+        }
+    }
+}
+
+fn disable_timer_resolution() {
+    let rt = runtime();
+    if rt.timer_resolution_active.swap(false, Ordering::SeqCst) {
+        unsafe { timeEndPeriod(1); }
     }
 }
 
@@ -601,13 +986,10 @@ fn start_worker(action: Action, vk: u32) {
         if active.contains_key(&vk) { return; }
         active.insert(vk, cancel.clone());
     }
-    thread::spawn(move || {
-        emit("execution", &format!("{{\"actionId\":\"{}\",\"actionName\":\"{}\",\"phase\":\"start\"}}", json_escape(&action.id), json_escape(&action.name)));
-        execute_action_loop(action.clone(), cancel.clone());
-        send_mouse_left(false);
-        emit("execution", &format!("{{\"actionId\":\"{}\",\"actionName\":\"{}\",\"phase\":\"end\"}}", json_escape(&action.id), json_escape(&action.name)));
-        let _ = runtime().active.lock().map(|mut active| { active.remove(&vk); });
-    });
+    if worker_sender().send(WorkerJob { action, vk, cancel, queued_at: Instant::now() }).is_err() {
+        let _ = rt.active.lock().map(|mut active| { active.remove(&vk); });
+        emit_log("error", "Rust macro worker pool is unavailable");
+    }
 }
 
 unsafe extern "system" fn keyboard_proc(code: i32, w_param: Wparam, l_param: Lparam) -> Lresult {
@@ -628,7 +1010,6 @@ unsafe extern "system" fn keyboard_proc(code: i32, w_param: Wparam, l_param: Lpa
         if is_down {
             let matched = runtime().actions.lock().ok().and_then(|actions| actions.iter().find(|a| key_to_vk(&a.hotkey) == Some(vk)).cloned());
             if let Some(action) = matched {
-                emit_log("info", &format!("Rust backend hotkey {} -> {} ({})", action.hotkey, action.name, action.action_type));
                 start_worker(action, vk);
                 return 1;
             }
@@ -681,6 +1062,7 @@ fn start_hook_thread() {
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), 0, 0);
         if hook == 0 {
             runtime().hook_alive.store(false, Ordering::SeqCst);
+            disable_timer_resolution();
             emit("error", "{\"message\":\"Rust backend failed to install keyboard hook\"}");
             return;
         }
@@ -691,6 +1073,7 @@ fn start_hook_thread() {
         runtime().hook_thread_id.store(0, Ordering::SeqCst);
         runtime().hook_alive.store(false, Ordering::SeqCst);
         if let Ok(active) = runtime().active.lock() { for cancel in active.values() { cancel.store(true, Ordering::SeqCst); } }
+        disable_timer_resolution();
         emit("status", "{\"status\":\"stopped\",\"message\":\"Rust backend stopped\"}");
     });
 }
@@ -740,6 +1123,9 @@ fn handle(command: &str, payload: &str) -> Result<String, String> {
             let summary = actions.iter().map(|a| format!("{}:{}:{}", a.hotkey, a.action_type, a.name)).collect::<Vec<_>>().join(", ");
             *runtime().actions.lock().map_err(|e| e.to_string())? = actions;
             emit_log("info", &format!("Rust backend loaded {} supported actions: {}", count, summary));
+            let _ = event_sender();
+            let _ = worker_sender();
+            enable_timer_resolution();
             start_mouse_hook_thread();
             start_hook_thread();
             Ok("{\"status\":\"listening\",\"message\":\"Rust backend listening\"}".to_string())

@@ -12,6 +12,7 @@ class BrowserFallbackApi implements MacroApi {
     presetExportDir: "data/exports",
     ahkDataDir: "data/ahk",
     timelineDir: "data/timelines",
+    logDir: "data/logs",
     relative: {
       dataDir: "data",
       configPath: "data/config/blue_archive_config.json",
@@ -19,7 +20,8 @@ class BrowserFallbackApi implements MacroApi {
       presetImportDir: "data/imports",
       presetExportDir: "data/exports",
       ahkDataDir: "data/ahk",
-      timelineDir: "data/timelines"
+      timelineDir: "data/timelines",
+      logDir: "data/logs"
     }
   });
   private presets: unknown[] = [];
@@ -45,6 +47,7 @@ class BrowserFallbackApi implements MacroApi {
   pickTimelineFile = async () => null;
   pickPresetPackage = async () => null;
   openDataDir = async (): Promise<StatusPayload> => ({ status: "unavailable", message: "浏览器预览不能打开 data 目录" });
+  openLogDir = async (): Promise<StatusPayload> => ({ status: "unavailable", message: "浏览器预览不能打开日志目录" });
   getInitialConfig = async () => this.config;
   saveConfig = async (config: MacroConfig) => {
     this.config = config;

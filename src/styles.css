@@ -36,7 +36,7 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
 }
 .timeline-confirm-button:hover { filter: brightness(1.04); }
 .macro-list { display: grid; gap: 10px; }.macro-row { width: 100%; min-height: 72px; display: grid; grid-template-columns: 42px minmax(150px,1fr) 42px minmax(96px,max-content) 18px; align-items: center; gap: 12px; padding: 13px; border-radius: 8px; border: 1px solid rgba(111,163,205,.28); background: rgba(248,252,255,.72); text-align: left; overflow: hidden; }.macro-row.selected { border-color: #18a8ef; background: rgba(226,246,255,.9); }.macro-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 8px; color: #0b81c4; background: #ddf2ff; }.macro-row strong,.macro-row small { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: keep-all; }.macro-row small,.macro-meta { color: #6b879d; font-size: 12px; white-space: nowrap; } kbd { min-width: 38px; padding: 6px 9px; border-radius: 7px; background: #17314a; color: white; text-align: center; }
-.error-box,.log-box { margin-top: 16px; padding: 14px; border-radius: 8px; }.error-box { color: #b4233d; background: rgba(255,239,243,.85); }.log-box { color: #547087; background: rgba(232,246,255,.72); }.log-box p,.error-box p { margin-bottom: 6px; }
+.error-box,.log-box { margin-top: 16px; padding: 14px; border-radius: 8px; }.error-box { color: #b4233d; background: rgba(255,239,243,.85); }.log-box { color: #547087; background: rgba(232,246,255,.72); }.log-box p,.error-box p { margin-bottom: 6px; }.log-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }.log-heading h3 { margin:0; }.log-heading > div { display:flex; gap:8px; }.log-tool { min-height:32px; display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:0 10px; border:1px solid rgba(112,163,204,.32); border-radius:7px; background:rgba(255,255,255,.74); color:#28506e; font-weight:700; cursor:pointer; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px; background: rgba(21,63,96,.42); backdrop-filter: blur(6px); }.letter-modal { width: min(560px,100%); position: relative; padding: 28px; border-radius: 8px; background: rgba(255,255,255,.92); box-shadow: 0 24px 80px rgba(15,64,102,.28); }.modal-close { position: absolute; right: 14px; top: 12px; width: 34px; height: 34px; border-radius: 8px; background: #e8f6ff; }
 @media (max-width: 1100px) { .app-shell { grid-template-columns: 72px minmax(0, 1fr); background: linear-gradient(90deg, rgba(247,251,255,.98) 0 72px, transparent 72px), linear-gradient(120deg, rgba(233,246,255,.62), rgba(255,255,255,.35)), var(--app-bg-image); background-size: auto, auto, cover; background-position: center; } .app-shell::after { inset: 0 0 0 72px; } .logo-lockup { grid-template-columns: 42px; justify-content: center; padding: 0; } .logo-lockup strong,.logo-lockup small, nav button span, .nav-foot { display: none; } .sidebar-toggle { position: static; margin: 0 auto; grid-column: 1; } nav button { justify-content: center; padding: 0; font-size: 0; } nav button svg { width: 20px; height: 20px; } .stage { padding: 20px; } .welcome-panel,.control-grid { grid-template-columns: 1fr; } .quick-actions { max-width: none; justify-content: flex-start; } .resolution-grid,.type-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 
@@ -66,6 +66,8 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
 }
 .startup-modal {
   width: min(680px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   padding: 28px;
   border-radius: 8px;
   color: #17314a;
@@ -88,6 +90,61 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
   color: #0b73af;
   background: #e8f7ff;
   font-weight: 800;
+}
+.startup-performance {
+  display: grid;
+  gap: 14px;
+  margin: 4px 0 16px;
+  padding: 16px;
+  border: 1px solid rgba(72, 154, 218, .25);
+  border-radius: 8px;
+  background: rgba(235, 247, 255, .64);
+}
+.startup-performance-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.startup-performance-heading h3 { margin-bottom: 4px; }
+.startup-performance-heading p { margin: 0; color: #66849b; font-size: 13px; }
+.startup-auto-toggle {
+  display: flex;
+  grid-auto-flow: initial;
+  align-items: center;
+  white-space: nowrap;
+}
+.startup-auto-toggle input { width: 18px; min-height: 18px; }
+.startup-setting-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.startup-option-group { display: grid; gap: 7px; color: #47647a; font-size: 13px; font-weight: 900; }
+.startup-option-group > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.startup-option-group .choice { min-height: 42px; padding: 0 10px; }
+.startup-refresh-presets { display: grid; gap: 7px; color: #47647a; font-size: 13px; font-weight: 900; }
+.startup-refresh-presets > div { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.startup-refresh-presets .choice { min-height: 38px; padding: 0 8px; }
+.timing-recommendation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  align-items: stretch;
+  gap: 10px;
+}
+.timing-recommendation > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255,255,255,.78);
+}
+.timing-recommendation span { color: #66849b; font-size: 12px; font-weight: 800; }
+.timing-recommendation strong { color: #0b73af; }
+.fast-play-timing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .preset-actions {
@@ -211,6 +268,12 @@ nav { display: grid; gap: 6px; min-height: 0; overflow: auto; scrollbar-width: t
   .startup-checklist {
     grid-template-columns: 1fr;
   }
+  .startup-setting-grid,
+  .timing-recommendation,
+  .fast-play-timing-grid {
+    grid-template-columns: 1fr;
+  }
+  .startup-refresh-presets > div { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 
