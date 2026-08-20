@@ -1,4 +1,5 @@
 import type { MacroAction, MacroConfig, MacroType, Resolution } from "./types";
+import { DSL_EXAMPLES, parseDsl } from "./dsl";
 
 export const FIXED_EMERGENCY_EXIT_KEY = "x";
 export type CoordinateTransformMode = "centerAxisScale" | "topLeftScale" | "containFit";
@@ -43,15 +44,7 @@ export const PRESET_RESOLUTIONS = [
   { label: "3840 x 2160", width: 3840, height: 2160 }
 ];
 
-export const DEFAULT_SCRIPT_MACRO = [
-  "# BAMT 宏脚本示例，坐标使用当前屏幕绝对坐标",
-  "# mouse 表示触发热键瞬间的鼠标位置",
-  "loop until_release",
-  "  drag 2688 1853 2688 1500 80",
-  "  move mouse 45",
-  "  sleep 50",
-  "end"
-].join("\n");
+export const DEFAULT_SCRIPT_MACRO = DSL_EXAMPLES.multiClick;
 
 export const DEFAULT_SKILL_SLOT_X_OFFSETS = [0.200, 0.280, 0.362];
 export const DEFAULT_SKILL_SLOT_BOTTOM_OFFSET_RATIO = 0.071;
@@ -387,7 +380,10 @@ export function validateConfig(config: MacroConfig): string[] {
     used.set(action.hotkey, action.name);
     if (action.targetX < 0 || action.targetY < 0) errors.push(`${action.name} 的坐标不能为负数`);
     if (action.targetX > config.resolution.width || action.targetY > config.resolution.height) errors.push(`${action.name} 的坐标超出当前分辨率`);
-    if (action.type === "script" && !(action.script || "").trim()) errors.push(`${action.name} 的脚本内容不能为空`);
+    if (action.type === "script") {
+      const result = parseDsl(action.script || "");
+      for (const problem of result.diagnostics) errors.push(`${action.name} 第 ${problem.line} 行：${problem.message}`);
+    }
     if (action.dragDistance <= 0 || action.cardHoldDuration <= 0 || action.dragDuration <= 0 || action.clickGap <= 0 || action.cardClickGap < 0 || normalizeLoopGap(action) <= 0) errors.push(`${action.name} 的数值参数必须大于 0`);
   }
   if (!config.actions.some((action) => action.enabled)) errors.push("至少需要启用一条指令");
@@ -459,6 +455,7 @@ function parseAhkAction(block: { hotkey: string; body: string }, index: number):
       targetX: ahkNumber(drag[1]),
       targetY: y1,
       dragDistance: Math.max(1, Math.abs(y1 - y2)),
+      cardHoldDuration: 0.007,
       dragDuration: Math.max(0.01, ahkNumber(drag[5], 80) / 1000),
       clickGap: 0.1,
     cardClickGap: 0.005,
@@ -484,6 +481,7 @@ function parseAhkAction(block: { hotkey: string; body: string }, index: number):
     targetX: point.x,
     targetY: point.y,
     dragDistance: 300,
+    cardHoldDuration: 0.007,
     dragDuration: 0.05,
     clickGap: Math.max(0.03, ahkNumber(sleep?.[1], 100) / 1000),
     cardClickGap: 0.005,

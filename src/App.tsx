@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Archive, BookOpen, Code2, CalendarDays, ChevronRight, Crosshair, FileDown, FileUp, FolderOpen, Hand, Home, Keyboard, LetterText, ListChecks, Menu, MousePointerClick, PanelLeftClose, PanelLeftOpen, Play, Plus, Save, Settings, Shuffle, Square, Trash2, Zap } from "lucide-react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   calculateSkillSlots,
   createAction,
@@ -25,6 +26,7 @@ import { hotkeyLabel, keyEventToHotkey, mouseEventToHotkey } from "./hotkeys";
 import { ProjectManual } from "./ProjectManual";
 import { AhkConsole } from "./AhkConsole";
 import { TimelinePlanner } from "./TimelinePlanner";
+import { DSL_COMMAND_REFERENCE, DSL_EXAMPLES, formatDsl, getDslCompletions, parseDsl, type DslCompletion } from "./dsl";
 import type { BackendEvent, BackendStatus, MacroAction, MacroConfig, MacroType } from "./types";
 import blueArchiveLogo from "./assets/blue-archive-logo-jp.svg";
 
@@ -102,6 +104,7 @@ export function App() {
 
   const [config, setConfig] = useState<MacroConfig>(DEFAULT_CONFIG);
   const configRef = useRef<MacroConfig>(DEFAULT_CONFIG);
+  const scriptEditorRef = useRef<HTMLTextAreaElement>(null);
   const [selectedId, setSelectedId] = useState(DEFAULT_CONFIG.actions[0]?.id ?? "");
   const [status, setStatus] = useState<BackendStatus>("booting");
   const [statusText, setStatusText] = useState("正在连接后端");
@@ -119,6 +122,9 @@ export function App() {
   const [storagePaths, setStoragePaths] = useState<{ relative: Record<string, string> } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [converter, setConverter] = useState({ fromW: 3840, fromH: 2160, toW: 2560, toH: 1600, x: 0, y: 0, mode: "centerAxisScale" as CoordinateTransformMode });
+  const [dslCaret, setDslCaret] = useState(0);
+  const [dslCompletionOpen, setDslCompletionOpen] = useState(false);
+  const [dslCompletionIndex, setDslCompletionIndex] = useState(0);
 
   const selected = config.actions.find((action) => action.id === selectedId) ?? config.actions[0];
   const errors = validateConfig(config);
@@ -126,6 +132,13 @@ export function App() {
   const canRun = errors.length === 0 && enabledCount > 0;
   const converterResult = transformPoint({ x: converter.x, y: converter.y }, { width: converter.fromW, height: converter.fromH }, { width: converter.toW, height: converter.toH }, converter.mode);
   const fastPlayTiming = recommendFastPlayTiming(config.displayRefreshRate, config.gameFrameRate, config.verticalSyncEnabled);
+  const scriptAnalysis = useMemo(() => selected?.type === "script" ? parseDsl(selected.script || "") : null, [selected?.type, selected?.script]);
+  const dslCompletions = useMemo(() => selected?.type === "script" && dslCompletionOpen ? getDslCompletions(selected.script || "", dslCaret) : [], [selected?.type, selected?.script, dslCaret, dslCompletionOpen]);
+
+  useEffect(() => {
+    setDslCompletionOpen(false);
+    setDslCompletionIndex(0);
+  }, [selectedId]);
 
   useEffect(() => {
     void api.getStoragePaths().then(setStoragePaths).catch(() => undefined);
@@ -284,6 +297,74 @@ export function App() {
     patchConfig({ skillSlotXOffsets: offsets });
   }
 
+  function insertDslSnippet(snippet: string) {
+    if (!selected || selected.type !== "script") return;
+    const editor = scriptEditorRef.current;
+    const source = selected.script || "";
+    const start = editor?.selectionStart ?? source.length;
+    const end = editor?.selectionEnd ?? start;
+    const prefix = start > 0 && source[start - 1] !== "\n" ? "\n" : "";
+    const suffix = end < source.length && source[end] !== "\n" ? "\n" : "";
+    const next = source.slice(0, start) + prefix + snippet + suffix + source.slice(end);
+    patchSelected({ script: next });
+    requestAnimationFrame(() => {
+      const position = start + prefix.length + snippet.length;
+      scriptEditorRef.current?.focus();
+      scriptEditorRef.current?.setSelectionRange(position, position);
+    });
+  }
+
+  function formatSelectedDsl() {
+    if (!scriptAnalysis || scriptAnalysis.diagnostics.length > 0) return;
+    patchSelected({ script: formatDsl(scriptAnalysis.commands) });
+  }
+
+  function updateDslCaret(editor: HTMLTextAreaElement, open = false) {
+    setDslCaret(editor.selectionStart);
+    if (open) {
+      setDslCompletionOpen(true);
+      setDslCompletionIndex(0);
+    }
+  }
+
+  function acceptDslCompletion(completion: DslCompletion) {
+    if (!selected || selected.type !== "script") return;
+    const source = selected.script || "";
+    const next = source.slice(0, completion.replaceStart) + completion.insertText + source.slice(completion.replaceEnd);
+    const nextCaret = completion.replaceStart + completion.insertText.length;
+    patchSelected({ script: next });
+    setDslCaret(nextCaret);
+    setDslCompletionOpen(false);
+    requestAnimationFrame(() => {
+      scriptEditorRef.current?.focus();
+      scriptEditorRef.current?.setSelectionRange(nextCaret, nextCaret);
+    });
+  }
+
+  function handleDslEditorKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.ctrlKey && event.code === "Space") {
+      event.preventDefault();
+      updateDslCaret(event.currentTarget, true);
+      return;
+    }
+    if (!dslCompletionOpen || dslCompletions.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setDslCompletionIndex((current) => (current + direction + dslCompletions.length) % dslCompletions.length);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      acceptDslCompletion(dslCompletions[Math.min(dslCompletionIndex, dslCompletions.length - 1)]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDslCompletionOpen(false);
+    }
+  }
+
   function withRecommendedFastPlayTiming(current: MacroConfig) {
     const timing = recommendFastPlayTiming(current.displayRefreshRate, current.gameFrameRate, current.verticalSyncEnabled);
     return {
@@ -344,22 +425,27 @@ export function App() {
     setSelectedId(next.id);
   }
 
-  async function importAhkAsScriptAction() {
-    stopBeforeEditing("导入 AHK 脚本宏");
+  async function importDslScriptAction() {
+    stopBeforeEditing("导入 DSL 脚本宏");
     const file = await api.pickPresetPackage();
     if (!file) {
-      pushLog("已取消导入 AHK 脚本宏");
+      pushLog("已取消导入 DSL 脚本宏");
+      return;
+    }
+    const analysis = parseDsl(file.text);
+    if (analysis.diagnostics.length > 0) {
+      pushLog(`DSL 导入失败：第 ${analysis.diagnostics[0].line} 行 ${analysis.diagnostics[0].message}`);
       return;
     }
     const next = createAction(Date.now());
     const used = new Set(config.actions.map((action) => action.hotkey));
     next.hotkey = "qwertasdfgzxcvbf123456".split("").find((key) => !used.has(key)) ?? "f6";
-    next.name = file.name.replace(/\.ahk$/i, "") || `脚本宏 ${config.actions.filter((action) => action.type === "script").length + 1}`;
+    next.name = file.name.replace(/\.(?:dsl|bamt|txt)$/i, "") || `脚本宏 ${config.actions.filter((action) => action.type === "script").length + 1}`;
     next.type = "script";
-    next.script = file.text;
+    next.script = formatDsl(analysis.commands);
     updateConfigLive((current) => ({ ...current, actions: [...current.actions, next] }));
     setSelectedId(next.id);
-    pushLog(`已导入 AHK 为脚本宏：${file.path}`);
+    pushLog(`已导入 DSL 脚本宏：${file.path}`);
   }
 
 
@@ -586,12 +672,82 @@ export function App() {
                 <label className="toggle-line"><input type="checkbox" checked={selected.enabled} onChange={(event) => patchSelected({ enabled: event.target.checked })} />启用</label>
               </div>
               <div className="type-grid">{(Object.keys(MACRO_LABELS).filter((type) => type !== "script") as MacroType[]).map((type) => { const Icon = typeIcons[type]; return <button key={type} className={selected.type === type ? "type-card active" : "type-card"} onClick={() => patchSelected({ type })} title={MACRO_DESCRIPTIONS[type]}><Icon size={20} />{MACRO_LABELS[type]}</button>; })}</div>
-              <div className="script-action-row"><button className={selected.type === "script" ? "capture active" : "capture"} onClick={() => addScriptAction()}><Plus size={17} />{"新增脚本宏"}</button><button className="capture" onClick={importAhkAsScriptAction}><FileDown size={17} />{"导入 AHK 脚本宏"}</button></div>
+              <div className="script-action-row"><button className={selected.type === "script" ? "capture active" : "capture"} onClick={() => addScriptAction()}><Plus size={17} />{"新增脚本宏"}</button><button className="capture" onClick={importDslScriptAction}><FileDown size={17} />{"导入 DSL 文件"}</button></div>
               <div className="field-row"><label>X<input type="number" value={selected.targetX} onChange={(event) => patchSelected({ targetX: Number(event.target.value) })} /></label><label>Y<input type="number" value={selected.targetY} onChange={(event) => patchSelected({ targetY: Number(event.target.value) })} /></label><button className="capture" onClick={capture}><Crosshair size={17} />捕获</button></div>
               {selected.type === "drag" && <div className="field-row"><label>距离<input type="number" value={selected.dragDistance} onChange={(event) => patchSelected({ dragDistance: Number(event.target.value) })} /></label><label>时长<input type="number" step="0.001" value={selected.dragDuration} onChange={(event) => patchSelected({ dragDuration: Number(event.target.value) })} /></label></div>}
               {selected.type === "point" && <label>{"\u6309\u4f4f\u65f6\u957f"}<input type="number" step="0.001" min="0.005" max="0.2" value={selected.clickGap ?? 0.03} onChange={(event) => patchSelected({ clickGap: Number(event.target.value) })} /></label>}
               {selected.type === "fastPlay" && <label>选牌键<input value={selected.cardKey || ""} placeholder="1 / 2 / 3" onChange={(event) => patchSelected({ cardKey: event.target.value.trim() })} /></label>}
-              {selected.type === "script" && <label className="script-editor-label">脚本内容<textarea className="macro-script-editor" value={selected.script || ""} onChange={(event) => patchSelected({ script: event.target.value })} spellCheck={false} /></label>}
+              {selected.type === "script" && scriptAnalysis && <div className="dsl-editor">
+                <div className="dsl-editor-head">
+                  <div><strong>Rust DSL 编辑器</strong><small>启动监听时由 Rust 预编译一次，执行阶段不再重复解析</small></div>
+                  <span className={scriptAnalysis.diagnostics.length === 0 ? "dsl-status ok" : "dsl-status error"}>{scriptAnalysis.diagnostics.length === 0 ? "语法通过" : `${scriptAnalysis.diagnostics.length} 个错误`}</span>
+                </div>
+                <div className="dsl-toolbar">
+                  <button type="button" onClick={() => insertDslSnippet("click target 7ms")}>+ 点击</button>
+                  <button type="button" onClick={() => insertDslSnippet("wait 7ms")}>+ 等待</button>
+                  <button type="button" onClick={() => insertDslSnippet("loop 3\n  click target 7ms\n  sleep 20\nloop_end")}>+ 重复</button>
+                  <button type="button" onClick={() => insertDslSnippet("loop until_release\n  click target 7ms\n  sleep 20\nloop_end")}>+ 按住循环</button>
+                  <button type="button" onClick={() => insertDslSnippet("release_actions")}>+ 松键动作</button>
+                  <button type="button" onClick={() => insertDslSnippet("drag target to target offset 0 -300 20ms")}>+ 拖动</button>
+                  <button type="button" onClick={formatSelectedDsl} disabled={scriptAnalysis.diagnostics.length > 0}>格式化</button>
+                </div>
+                <div className="dsl-example-tabs">
+                  <span>示例：</span>
+                  <button type="button" onClick={() => patchSelected({ script: DSL_EXAMPLES.singleSequence })}>单次顺序</button>
+                  <button type="button" onClick={() => patchSelected({ script: DSL_EXAMPLES.multiClick })}>多点循环</button>
+                  <button type="button" onClick={() => patchSelected({ script: DSL_EXAMPLES.keyAndClick })}>选牌点击</button>
+                  <button type="button" onClick={() => patchSelected({ script: DSL_EXAMPLES.drag })}>拖动循环</button>
+                  <button type="button" onClick={() => patchSelected({ script: DSL_EXAMPLES.finiteRepeat })}>有限重复</button>
+                </div>
+                <div className="dsl-code-area">
+                  <textarea
+                    ref={scriptEditorRef}
+                    className="macro-script-editor"
+                    aria-label="Rust DSL 脚本内容"
+                    aria-autocomplete="list"
+                    aria-expanded={dslCompletionOpen && dslCompletions.length > 0}
+                    value={selected.script || ""}
+                    onChange={(event) => {
+                      patchSelected({ script: event.target.value });
+                      updateDslCaret(event.target, true);
+                    }}
+                    onClick={(event) => updateDslCaret(event.currentTarget)}
+                    onKeyUp={(event) => {
+                      if (!["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) updateDslCaret(event.currentTarget);
+                    }}
+                    onKeyDown={handleDslEditorKeyDown}
+                    onBlur={() => window.setTimeout(() => setDslCompletionOpen(false), 120)}
+                    spellCheck={false}
+                  />
+                  {dslCompletionOpen && dslCompletions.length > 0 && <div className="dsl-completions" role="listbox" aria-label="DSL 代码补全">
+                    {dslCompletions.map((completion, index) => <button
+                      type="button"
+                      role="option"
+                      aria-selected={index === dslCompletionIndex}
+                      className={index === dslCompletionIndex ? "active" : ""}
+                      key={`${completion.label}-${completion.insertText}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => acceptDslCompletion(completion)}
+                    ><code>{completion.label}</code><span>{completion.detail}</span></button>)}
+                    <small>↑↓ 选择　Tab / Enter 补全　Esc 关闭　Ctrl+Space 唤出</small>
+                  </div>}
+                </div>
+                <div className="dsl-summary">
+                  <span>{scriptAnalysis.stats.commandCount} 条命令</span>
+                  <span>{scriptAnalysis.stats.blockCount} 个模块</span>
+                  <span>{scriptAnalysis.stats.loopUntilReleaseCount} 个按住循环</span>
+                  <span>时间支持 us / ms / s</span>
+                </div>
+                {scriptAnalysis.diagnostics.length > 0 && <div className="dsl-diagnostics">{scriptAnalysis.diagnostics.slice(0, 8).map((problem, index) => <button type="button" key={`${problem.line}-${index}`} onClick={() => {
+                  const editor = scriptEditorRef.current;
+                  if (!editor) return;
+                  const offset = (selected.script || "").split("\n").slice(0, problem.line - 1).reduce((total, line) => total + line.length + 1, 0);
+                  editor.focus();
+                  editor.setSelectionRange(offset, offset);
+                }}><b>第 {problem.line} 行</b><span>{problem.message}</span></button>)}</div>}
+                <details className="dsl-reference"><summary>语法速查</summary><div>{DSL_COMMAND_REFERENCE.map(([syntax, note]) => <p key={syntax}><code>{syntax}</code><span>{note}</span></p>)}</div></details>
+                <p className="hint">没有 <code>loop</code> 时，按一次热键只完整执行一次。MuMu 坐标可写作 <code>1280,720</code>；<code>target</code> 为本宏 X/Y，<code>origin</code> 为触发瞬间的鼠标位置。脚本结束会兜底释放输入并返回原位。</p>
+              </div>}
               {selected.type === "drag" && <label>循环间隔<input type="number" step="0.001" value={selected.loopGap ?? 0.05} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label>}
               {selected.type === "fastPlay" && <div className="fast-play-timing-grid"><label>选牌按下<input type="number" step="0.001" min="0.001" value={selected.cardHoldDuration ?? 0.007} onChange={(event) => patchSelected({ cardHoldDuration: Number(event.target.value) })} /></label><label>牌到点击<input type="number" step="0.001" min="0.001" value={selected.cardClickGap ?? 0.007} onChange={(event) => patchSelected({ cardClickGap: Number(event.target.value) })} /></label><label>点击按住<input type="number" step="0.001" min="0.001" value={selected.dragDuration ?? 0.007} onChange={(event) => patchSelected({ dragDuration: Number(event.target.value) })} /></label><label>循环间隔<input type="number" step="0.001" min="0.001" value={selected.loopGap ?? 0.007} onChange={(event) => patchSelected({ loopGap: Number(event.target.value) })} /></label></div>}
               {selected.type === "autoClick" && <label>连点间隔<input type="number" step="0.01" value={selected.clickGap} onChange={(event) => patchSelected({ clickGap: Number(event.target.value) })} /></label>}

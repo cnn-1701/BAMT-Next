@@ -44,6 +44,10 @@ function rustBackendCandidates(): string[] {
   const exeName = "bamt-rust-backend.exe";
   const candidates = [
     process.env.BAMT_RUST_BACKEND,
+    ...(isDev ? [
+      path.join(appDir, "rust-backend", "target", "debug", exeName),
+      path.join(projectDir, "rust-backend", "target", "debug", exeName)
+    ] : []),
     path.join(appDir, "rust-backend", "target", "release", exeName),
     path.join(projectDir, "rust-backend", "target", "release", exeName),
     path.join(appDir, "tools", "rust-backend", exeName),
@@ -274,7 +278,7 @@ function registerIpc(): void {
       defaultPath: presetImportDir,
       properties: ["openFile"],
       filters: [
-        { name: "BAMT / AHK 预设", extensions: ["json", "ahk"] },
+        { name: "BAMT 宏预设 / DSL / AHK", extensions: ["json", "dsl", "bamt", "txt", "ahk"] },
         { name: "全部文件", extensions: ["*"] }
       ]
     };

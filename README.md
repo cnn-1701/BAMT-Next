@@ -17,6 +17,18 @@ BAMT Next 是面向 `国际服` / `日服` 《碧蓝档案》PC 端的本地宏�
 
 > 若要直接使用打包好的执行文件，请使用管理员权限开启并在首次使用前完成基本分辨率的设定与点位映射的校准检查
 
+## 2.3.0 更新说明
+
+- 重构脚本宏 DSL：前端使用严格解析器检查语法，Rust 后端在开始监听前完成解析与预编译，运行期间不再重复拆解脚本文本
+- 脚本默认只执行一次；只有显式写出 `loop`、`loop N` 或 `loop until_release` 时才会进入循环
+- 兼容 MuMu 宏按键的常用核心语法，包括 `x,y`、`click`、`wait`、`key_press`、`key_release`、`mouse_press`、`mouse_release`、`loop`、`loop_end` 与 `release_actions`
+- 保留 BAMT 原有命令别名，并新增 `release_all`，用于异常终止或热键松开时统一释放仍处于按下状态的键盘和鼠标按键
+- 脚本编辑器加入语法提示、代码补全、错误行定位、示例模板和 AHK 脚本导入入口
+- 全局宏预设的导入、导出和合并现在可携带脚本宏配置
+- 应用内使用说明书与本 README 已补全 DSL 命令、参数、循环规则、释放规则及示例
+
+MuMu 宏按键说明可参考：[MuMu 模拟器宏按键设置指南](https://mumu.163.com/help/20240111/35047_1131289.html)。BAMT 兼容的是其中适用于 PC 键盘与鼠标自动化的核心写法；多点触控、摇杆、划线与模拟器专属坐标接口暂不伪装支持。
+
 ## 2.2.0 重构说明
 
 - 宏运行后端已改为 Rust，不再启动或打包 Python 宏服务
@@ -147,39 +159,78 @@ CoordMode("Mouse", "Screen")
 
 ## 脚本宏 DSL
 
-脚本宏不是 Python，也不是完整 AHK。它是 BAMT Rust 后端解析的固定语法
+脚本宏不是 Python 或 AHK，而是由 BAMT Rust 后端执行的严格 DSL。前端编辑器会即时显示语法错误；开始监听时 Rust 会再次校验并预编译一次，热键触发阶段直接执行已编译命令，不会在循环中反复解析文本。
 
 规则：
 
 - 一行一条命令
 - 空行忽略
-- `#`、`//`、`;` 开头是注释
-- 坐标使用当前分辨率下的屏幕坐标
-- 时间单位为毫秒
-- `mouse` 表示触发热键瞬间的鼠标位置
+- `#`、`//`、`;` 之后的内容是注释
+- 未写 `loop` 时，按下热键后从上到下完整执行一次，不会默认循环
+- 时间支持 `us`、`ms`、`s`，例如 `500us`、`7ms`、`0.02s`；省略单位时按毫秒处理
+- 绝对坐标可写作 MuMu 风格的 `x,y` 或 BAMT 风格的 `x y`，使用当前逻辑分辨率并自动映射到实际屏幕
+- `target` 表示该宏编辑区的 X/Y 预设点
+- `origin`（兼容写法 `mouse`）表示触发热键瞬间的鼠标位置
+- `here`（兼容写法 `current`）表示执行到该命令时的实时鼠标位置
+- 点位关键字后可追加 `offset x y`，例如 `target offset 0 -300`
+- `loop`、`loop N`、`loop until_release` 均以 `loop_end` 结束；旧版 `repeat N ... end` 仍兼容
+- 循环体必须包含等待或有持续时间的动作，避免无等待死循环占满 CPU
+- `release_actions` 之后的命令会等到触发热键松开后再执行
+- 停止或取消时会统一释放脚本按下的鼠标/键盘，并把光标恢复到触发位置
 
 示例：
 
 ```text
-loop until_release
-  press 2688 1853
-  move 2688 1553 20
-  release mouse
-  sleep 50
-end
+# 未写 loop：每次按下热键只执行一遍
+click 1280,720 7ms
+sleep 20
+click target offset 0 -200 7ms
+restore
 ```
 
 常用命令：
 
 | 命令 | 说明 |
 | --- | --- |
-| `sleep 50` | 等待 50 ms |
-| `move x y 10` | 移动到坐标，可选等待时间 |
-| `click x y 35` | 移动到坐标并点击 |
-| `press x y` | 移动到坐标并按下左键 |
-| `release x y` | 可选移动到坐标后释放左键 |
-| `drag sx sy ex ey 80` | 从起点拖到终点 |
-| `loop until_release ... end` | 按住热键期间循环执行 |
+| `wait 7ms` | 使用高精度等待；`sleep` 是兼容别名 |
+| `move x y 1ms` | 移动到绝对坐标，并可在移动后等待 |
+| `click target 7ms` | 移动到宏预设点，按下左键 7 ms 后释放 |
+| `click origin` | 点击触发热键时的鼠标位置 |
+| `press target` / `release here` | 分开控制左键按下与释放 |
+| `drag target to target offset 0 -300 20ms` | 从预设点拖到其上方 300 像素 |
+| `key tap 1 7ms` | 按下并释放键盘 `1`；也支持 `key down` / `key up` |
+| `key_press 1` / `key_release 1` | MuMu 兼容的键盘按下与释放 |
+| `mouse_press left` / `mouse_release left` | MuMu 兼容的鼠标左键按下与释放 |
+| `loop 3 ... loop_end` | 固定重复 3 次，最大 100000 次 |
+| `loop ... loop_end` | 按住触发热键期间重复；也可写 `loop until_release` |
+| `release_actions` | 后续命令在触发热键松开时执行，仅可位于顶层一次 |
+| `release_all` | 立即释放本脚本保持的鼠标和键盘输入 |
+| `restore 1ms` | 释放左键并回到触发瞬间的鼠标位置 |
+
+完整示例：
+
+```text
+# 先按 1 选牌，再点击触发时的鼠标位置
+loop
+  key tap 1 7ms
+  wait 7ms
+  click origin 7ms
+  wait 7ms
+loop_end
+```
+
+```text
+# 有限执行三次
+loop 3
+  click target 7ms
+  wait 16.667ms
+loop_end
+restore
+```
+
+MuMu 文档中的多指同时触控、摇杆、准星和触控曲线命令依赖模拟器内部接口，Windows 原生单光标后端不会伪装支持。BAMT 直接支持适用于 PC 输入的核心语法，并额外提供 `target`、`origin`、`here`、`offset`、`drag`、`restore` 和微秒时间单位。
+
+DSL 文件可通过编辑区的“导入 DSL 文件”载入。AHK 与 DSL 不是同一种语法，`.ahk` 文件请在左侧 AHK 解释器中运行，不应直接粘贴到 DSL 编辑器。
 
 ## 排轴编辑器
 

@@ -1,12 +1,14 @@
 {
   "name": "bamt-next",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Blue Archive Macro Tool rebuilt with Electron, React, TypeScript, and a native Windows backend.",
   "main": "dist-electron/electron/main.js",
   "scripts": {
+    "predev": "cargo build --manifest-path rust-backend/Cargo.toml",
     "dev": "concurrently -k \"tsc -p tsconfig.node.json --watch\" \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 dist-electron/electron/main.js && electron .\"",
     "build": "tsc -p tsconfig.node.json && vite build",
+    "predist": "cargo build --release --manifest-path rust-backend/Cargo.toml",
     "dist": "npm run build && electron-builder --win portable",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
     "preview": "vite --host 127.0.0.1",
